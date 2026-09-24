@@ -1,4 +1,4 @@
-! Spotify ad skip — experimental standalone Chroma resource.
+! Spotify ad skip — experimental standalone Chroma/uBlock resource.
 ! Host this file at a raw HTTPS URL, add it in User Scriptlets, then save:
 ! open.spotify.com##+js(spotify-ad-skip)
 ! Reload Spotify after enabling or removing the rule. Play audio in this tab.
