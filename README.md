@@ -29,7 +29,7 @@ Tested in one live Spotify Web Player session: the script detected an ad, replac
 - Repeated removal messages can refer to the same ad; they are not a reliable ad counter.
 - The script has no popup, toast UI, or extension counter. Diagnostic messages remain in the browser console.
 
-To disable it, remove the rule in Chroma and reload Spotify. Already-open tabs retain the injected hooks until reloaded.
+To disable it, remove the rule in Chroma or uBlock and reload Spotify. Already-open tabs retain the injected hooks until reloaded.
 
 If you have found yourself here this script may or may not work for you and I don't currently plan to maintain this script as I don't often use Spotify myself.  
 
