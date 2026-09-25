@@ -1,4 +1,4 @@
-# Spotify Ad Skip
+# Spotify Ad Skip Script
 
 An experimental Spotify Web Player ad-skipping scriptlet for [Chroma Ad-Blocker](https://github.com/Dabrogost/Chroma-Ad-Blocker) and [uBlock Origin](https://github.com/gorhill/ublock).
 
@@ -6,11 +6,19 @@ The script intercepts Spotify's playback-state responses and WebSocket updates, 
 
 ## Install
 
-Open `spotify-ad-skip.txt` in this repository and copy its **Raw** HTTPS URL.
+Use the following Raw HTTPS URL for `spotify-ad-skip.txt`:
+
+```text
+https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spotify-ad-skip.txt
+```
 
 ### Chroma Ad-Blocker (working 09/24/26)
 
-1. Open Chroma settings → **User Scriptlets** → **Add URL** and paste the Raw URL.
+1. Open Chroma settings → **User Scriptlets** → **Add URL** and paste:
+
+   ```text
+   https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spotify-ad-skip.txt
+   ```
 
 2. Add this rule and click **Save Rules**:
 
@@ -24,19 +32,33 @@ Chroma's master protection and Chrome's **Allow User Scripts** setting must be e
 
 ### uBlock Origin (un-tested)
 
+uBlock Origin already includes Spotify-specific filtering that redirects known ad-media requests to its built-in short dummy media resource. Those rules can handle the ad before `spotify-ad-skip` has a useful opportunity to manipulate Spotify's playback state, so they should be exempted when using this scriptlet.
+
 1. Open the uBlock Origin dashboard → **Settings** and enable **I am an advanced user** if it is not already enabled.
 
-2. Click the advanced-settings cog, find `userResourcesLocation`, and set it to the Raw HTTPS URL for `spotify-ad-skip.txt`.
+2. Click the advanced-settings cog, find `userResourcesLocation`, and add:
+
+   ```text
+   https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spotify-ad-skip.txt
+   ```
+
+   If you already use `userResourcesLocation` for other custom resources, keep the existing URL(s) and add this one separated by a space.
 
 3. Open **My filters** and add:
 
    ```adblock
+   ! Let spotify-ad-skip handle Spotify media instead of uBO's built-in redirects
+   @@*$media,domain=open.spotify.com
+
+   ! Run spotify-ad-skip
    open.spotify.com##+js(spotify-ad-skip)
    ```
 
-4. Click **Apply changes**, then reload Spotify and play music in the browser tab.
+4. Click **Apply changes**, then fully reload Spotify and play music in the browser tab.
 
-If you already use `userResourcesLocation` for other custom resources, keep the existing URL(s) and add this one separated by a space.
+The exception rules above prevent uBlock Origin's built-in Spotify ad-media redirects from handling the ad first. Without them, uBlock Origin may replace the ad media with its own short dummy media resource before `spotify-ad-skip` can handle the playback state.
+
+A `SpotifyAdRemover: Loaded` console message confirms that the scriptlet was injected. When its ad-handling path runs, `SpotifyAdRemover: Encountered ad` and `SpotifyAdRemover: Removed ad` messages should appear.
 
 The file includes its required helpers. No additional scripts or separate Spotify extension are needed. It uses the uBlock-style resource format and can be loaded through Chroma's User Scriptlets feature or uBlock Origin's `userResourcesLocation` advanced setting.
 
