@@ -12,7 +12,7 @@ Use the following Raw HTTPS URL for `spotify-ad-skip.txt`:
 https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spotify-ad-skip.txt
 ```
 
-### Chroma Ad-Blocker (working 09/24/26)
+### Chroma Ad-Blocker (working 09/25/26)
 
 1. Open Chroma settings → **User Scriptlets** → **Add URL** and paste:
 
@@ -30,7 +30,7 @@ https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spot
 
 Chroma's master protection and Chrome's **Allow User Scripts** setting must be enabled. On Chrome 122–137, enable **Developer Mode** instead.
 
-### uBlock Origin (un-tested)
+### uBlock Origin (working 09/25/26)
 
 uBlock Origin already includes Spotify-specific filtering that redirects known ad-media requests to its built-in short dummy media resource. Those rules can handle the ad before `spotify-ad-skip` has a useful opportunity to manipulate Spotify's playback state, so they should be exempted when using this scriptlet.
 
