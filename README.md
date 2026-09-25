@@ -8,7 +8,7 @@ The script intercepts Spotify's playback-state responses and WebSocket updates, 
 
 Open `spotify-ad-skip.txt` in this repository and copy its **Raw** HTTPS URL.
 
-### Chroma Ad-Blocker
+### Chroma Ad-Blocker (working 09/24/26)
 
 1. Open Chroma settings → **User Scriptlets** → **Add URL** and paste the Raw URL.
 
@@ -22,7 +22,7 @@ Open `spotify-ad-skip.txt` in this repository and copy its **Raw** HTTPS URL.
 
 Chroma's master protection and Chrome's **Allow User Scripts** setting must be enabled. On Chrome 122–137, enable **Developer Mode** instead.
 
-### uBlock Origin
+### uBlock Origin (un-tested)
 
 1. Open the uBlock Origin dashboard → **Settings** and enable **I am an advanced user** if it is not already enabled.
 
@@ -51,14 +51,36 @@ Tested in multiple live Spotify Web Player sessions with Chroma: the script dete
 
 To disable it, remove the rule in Chroma or uBlock and reload Spotify. Already-open tabs retain the injected hooks until reloaded.
 
-If you have found yourself here this script may or may not work for you and I don't currently plan to maintain this script as I don't often use Spotify myself.
+If you have found yourself here, this script may or may not work for you, and I don't currently plan to maintain it as I don't often use Spotify myself.
 
 ## Credits and license
 
-Adapted from https://github.com/tomer8007/spotify-web-ads-remover, revision `fd6b71475ddb3f89607902c174652fd14d226055`.
+This project is adapted from [tomer8007/spotify-web-ads-remover](https://github.com/tomer8007/spotify-web-ads-remover), revision `fd6b71475ddb3f89607902c174652fd14d226055`, which is distributed under the GNU General Public License v3.
 
-The adaptation bundles the playback logic, promise queue, and WebSocket helper into one resource; removes the original extension UI and DOM observers; and adds Spotify-only and duplicate-injection guards. The WebSocket helper credits https://github.com/skepticfx/wshook.
+This adaptation bundles the playback logic, promise queue, and WebSocket helper into a single scriptlet resource; removes the original extension UI, counters, and DOM observers; and adds Spotify-only and duplicate-injection guards and local state handling.
 
-Distributed under the GNU General Public License v3. See the license file included in this repository.
+The modified work is distributed under the **GNU General Public License v3 (GPL-3.0)**. See [`LICENSE`](LICENSE) for the complete license terms.
 
-This project is independent of Spotify and is not affiliated with or endorsed by Spotify.
+### Third-party notices
+
+#### wsHook
+
+Portions of the WebSocket interception code are derived from [skepticfx/wshook](https://github.com/skepticfx/wshook), originally licensed under the MIT License.
+
+Copyright (c) 2015 Ahamed Nafeez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+#### PromiseQueue
+
+The bundled `PromiseQueue` helper was included by the upstream project with attribution to Karen Markosyan's article, [How to manage promises into dynamic queue with vanilla JavaScript](https://medium.com/@karenmarkosyan/how-to-manage-promises-into-dynamic-queue-with-vanilla-javascript-9d0d1f8d4df5).
+
+The combined `spotify-ad-skip.txt` work remains distributed under GPL-3.0, while the copyright and license notice above is retained for the wsHook-derived portion.
+
+## Disclaimer
+
+This project is independent of Spotify and is not affiliated with, sponsored by, or endorsed by Spotify.
