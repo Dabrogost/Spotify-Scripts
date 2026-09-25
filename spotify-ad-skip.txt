@@ -8,7 +8,7 @@
 ! Modified 2026-09-24: bundle queue and WebSocket helper; remove extension UI,
 ! counters and DOM observers; add host/duplicate guards and local stateRef.
 ! Upstream playback logic is retained, including its experimental limitations.
-! License: https://www.gnu.org/licenses/gpl-3.0.html (also LICENSE.md in this repo).
+! License: https://www.gnu.org/licenses/gpl-3.0.html (also LICENSE in this repo).
 !
 spotify-ad-skip.js text/javascript
 (function () {
