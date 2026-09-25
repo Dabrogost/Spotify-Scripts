@@ -41,9 +41,9 @@ uBlock Origin already includes Spotify-specific filtering that redirects known a
    ```text
    https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spotify-ad-skip.txt
    ```
-
+   > **Note:** uBlock Origin caches custom `userResourcesLocation` resources. If the script has been updated but uBlock still appears to use an older version, change the resource URL by appending a cache-busting query string such as `?v=2`, then apply the advanced-settings change and reload Spotify.
    If you already use `userResourcesLocation` for other custom resources, keep the existing URL(s) and add this one separated by a space.
-
+   
 3. Open **My filters** and add:
 
    ```adblock
