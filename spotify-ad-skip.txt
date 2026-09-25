@@ -16,7 +16,6 @@ spotify-ad-skip.js text/javascript
     if (location.hostname !== 'open.spotify.com' || window.top !== window) return;
     const installed = Symbol.for('chroma.spotify-ad-skip');
     if (window[installed]) return;
-
 // https://medium.com/@karenmarkosyan/how-to-manage-promises-into-dynamic-queue-with-vanilla-javascript-9d0d1f8d4df5
 class PromiseQueue {
     constructor()
@@ -24,7 +23,6 @@ class PromiseQueue {
         this.queue = [];
         this.pendingPromise = false;
     }
-
     enqueue(promise, argument) {
       return new Promise((resolve, reject) => {
           this.queue.push({
@@ -36,7 +34,6 @@ class PromiseQueue {
           this.dequeue();
       });
     }
-
   dequeue() {
       if (this.workingOnPromise) {
         return false;
@@ -92,9 +89,7 @@ class PromiseQueue {
  */
 // wsHook - WebSocket Interception
 	// based on https://github.com/skepticfx/wshook
-
 	var wsHook = {};
-
 	(function()
 	{
 		var before = wsHook.before = function(data, url)
@@ -113,7 +108,6 @@ class PromiseQueue {
 			wsHook.before = before;
 			wsHook.after = after;
 		}
-
 		var _WS = WebSocket;
 		WebSocket = function(url, protocols)
 		{
@@ -124,7 +118,6 @@ class PromiseQueue {
 			WSObject = new _WS(url);
 			else
 			WSObject = new _WS(url, protocols);
-
 			var _send = WSObject.send;
 			var _wsobject = this;
 			wsHook._send = WSObject.send = function(data)
@@ -134,14 +127,12 @@ class PromiseQueue {
 				{
 					if (newData != null)
 						_send.apply(WSObject, [newData]);
-
 				}).catch(function(e)
 				{
 					console.error(e);
 					_send.apply(WSObject, [newData]);
 				});
 			}
-
 			// Events needs to be proxied and bubbled down.
 			var onmessageFunction;
 			WSObject.__defineSetter__('onmessage', function(func)
@@ -155,25 +146,20 @@ class PromiseQueue {
 					console.log("warning: no onmessageFunction");
 					return;
 				}
-
 				wsHook.after(new MutableMessageEvent(event), this.url).then(function(modifiedEvent)
 				{
 					if (modifiedEvent != null)
 						onmessageFunction.apply(this, [modifiedEvent]);
-
 				}).catch(function(e)
 				{
 					console.error(e);
 					onmessageFunction.apply(this, [event]);
 				});
-
 				//e = new MessageEvent(e.type, e);
 			});
-
 			return WSObject;
 		}
 	})();
-
 	// Mutable MessageEvent.
 	// Subclasses MessageEvent and makes data, origin and other MessageEvent properites mutatble.
 	function MutableMessageEvent(o)
@@ -197,62 +183,48 @@ class PromiseQueue {
 		this.type = o.type || "message";
 		this.__proto__ = o.__proto__ || MessageEvent.__proto__;
 	}
-
 var stateRef;
 var currentTracks = [];
 var tamperedStatesMap = {};
 var deviceId = "";
-
 var originalFetch = window.fetch;
 var isFetchInterceptionWorking = false;
 var isWebScoketInterceptionWorking = false;
 var isSimulatingStateChnage = false;
-
 var accessToken = "";
 var clientToken = "";
 var authorizationHeader = "";
-
 var statesManipuationQueue = new PromiseQueue();
-
 //
 // Hook the fetch() function.
 //
 window.fetch = function(url, init)
 {
     var url = typeof(url) == 'string' ? url : url.toString();
-
     if (url != undefined && url.includes("/state"))
     {
         if (init.headers["authorization"])
             authorizationHeader = init.headers["authorization"];
         if (init.headers["client-token"])
             clientToken = init.headers["client-token"];
-
         var request = JSON.parse(init.body);
         if (request["state_ref"]["state_id"].includes("future_"))
         {
             console.log("SpotiAds: Changing Spotify's states request to reflect future state machine");
-
             var stateMachineId = request["state_ref"]["state_id"].split("+")[1];
             var stateId = request["state_ref"]["state_id"].split("+")[2];
-
             request["state_ref"]["state_id"] = stateId;
             request["state_ref"]["state_machine_id"] = stateMachineId;
-
             init.body = JSON.stringify(request);
         }
-
         var promise = async function(fetchArguments) {
-
         return originalFetch.call(window, fetchArguments.url, fetchArguments.init).then(function(response)
         {
             // TODO: what do we do  on 429 here?
             var modifiedResponse = onStatesFetchResponseReceived(url, init, response);
             return modifiedResponse;
         });
-
         };
-
         return statesManipuationQueue.enqueue(promise, {url: url, init: init});
     }
     else if (url != undefined && url.endsWith("/devices"))
@@ -271,7 +243,6 @@ window.fetch = function(url, init)
     else if (url.includes("connect-state"))
     {
         var promise = async function(fetchArguments) {
-
         var request = JSON.parse(init.body);
         if (request["command"] != null)
         {
@@ -282,10 +253,8 @@ window.fetch = function(url, init)
             console.log("SpotiAds: We see connect-state with member_type: " + request["member_type"]);
         }
         return originalFetch.call(window, fetchArguments.url, fetchArguments.init);
-
         }
         return statesManipuationQueue.enqueue(promise, {url: url, init: init});
-
     }
     else if (url.includes("/license"))
     {
@@ -299,18 +268,14 @@ window.fetch = function(url, init)
             return response;
         });
     }
-
     // Make the original request.
     var fetchResult = originalFetch.call(window, url, init);
     return fetchResult;
 };
-
 async function onAccessTokenResponseIntercepted(accessTokenResponse)
 {
     var resultJson = await accessTokenResponse.json();
-
     console.log("SpotiAds: access token received.");
-
     if (accessTokenResponse.status != 200)
     {
         console.error("SpotiAds: Could not refresh access token. error:");
@@ -319,21 +284,17 @@ async function onAccessTokenResponseIntercepted(accessTokenResponse)
     }
     accessToken = resultJson["accessToken"];
 }
-
 //
 // Hook the WebSocket channel.
 //
 wsHook.after = function(messageEvent, url)
 {
     var promise = async function(messageEvent) {
-
     try
     {
-
         var data = JSON.parse(messageEvent.data);
         //console.log("SpotiAds: we see websocket payload: " + data.toString());
         if (data.payloads == undefined) {return messageEvent;}
-
         for (var i = 0; i < data.payloads.length; i++)
         {
             var payload = data.payloads[i];
@@ -344,22 +305,16 @@ wsHook.after = function(messageEvent, url)
                 //var prevStateRef = payload["prev_state_ref"];
                 //if (prevStateMachineId)
                 //   var prevStateMachineId = prevStateRef["state_machine_id"];
-
                 if (stateRef != null)
                 {
                     var currentStateIndex = stateRef["state_index"];
-
                     //console.log("SpotiAds: Received state machine over WebSocket, manipulating it");
-
                     // TODO: it's possible that payload["prev_state_ref"] will be different that the current state machine, states will be rejected,
                     //       which will cause Spotify to request /state_conflict. see _rejectState(). Is it our fault?
-
                     payload["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "web_socket_replace_state");
                     data.payloads[i] = payload;
-
                     isWebScoketInterceptionWorking = true;
                 }
-
                 if (isSimulatingStateChnage)
                 {
                     // Block this notification from reaching the client, to prevent song change.
@@ -375,10 +330,8 @@ wsHook.after = function(messageEvent, url)
                     {
                         // TODO: Find a way to really detect when another device is playing
                         // instead of having false positives
-
                         // showMultiDeviceWarning();
                     }
-
                     if (payload.cluster.player_state.track.provider == "ads/inject_tracks")
                     {
                         console.log("SpotiAds: Spotify tring to inject ads? advertiser: " + payload.cluster.player_state.track.metadata.advertiser);
@@ -390,9 +343,7 @@ wsHook.after = function(messageEvent, url)
                 }
             }
         }
-
         messageEvent.data = JSON.stringify(data);
-
         return messageEvent;
     }
     catch(exception)
@@ -400,40 +351,30 @@ wsHook.after = function(messageEvent, url)
         console.log(exception);
         return messageEvent;
     }
-
     };
-
     return statesManipuationQueue.enqueue(promise, messageEvent);
 }
-
 function onStatesFetchResponseReceived(url, init, responseBody)
 {
     var requestBody = init.body;
     var request = JSON.parse(requestBody);
-
     var originalJsonPromise = responseBody.json();
     responseBody.json = function(request)
     {
         var promise = async function() {
-
         return originalJsonPromise.then(async function(data)
         {
             var stateMachine = data["state_machine"];
             var updatedStateRef = data["updated_state_ref"];
-
             var commands = data["commands"];
             if (commands == null)
             {
                 // for regular /state update request
                 // _updateState, _handleStateUpdateResponse
-
                 if (stateMachine == undefined || updatedStateRef == null) return data;
-
                 var currentStateIndex = updatedStateRef["state_index"];
                 var debug_source = request["debug_source"];
-
                 data["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, false, debug_source);
-
                 // if (debug_source == "modify_current_state")
                 // {
                 //     // HACKKKKKKKKKKKKK
@@ -442,14 +383,12 @@ function onStatesFetchResponseReceived(url, init, responseBody)
                 //     //data["state_machine"]["state_machine_id"] = "hrepsh";
                 //     return data;
                 // }
-
                 isFetchInterceptionWorking = true;
             }
             else
             {
                  // for /state_conflict
                  // _rejectState
-
                 var rejectedStates = request["rejected_state_refs"];
                 var rejectedStatesString = "";
                 for (var i = 0; i < rejectedStates.length; i++)
@@ -457,110 +396,81 @@ function onStatesFetchResponseReceived(url, init, responseBody)
                     rejectedStatesString += rejectedStates[i]["state_machine_id"] + " ";
                 }
                 var stateRef = request["state_ref"];
-
                 console.log("SpotiAds: We see /state_conflict. rejected_state_refs: " + rejectedStatesString + ", current state_machine_id: " + stateRef["state_machine_id"]);
                 for (var key of Object.keys(commands))
                 {
                     var stateMachine = data["commands"][key]["state_machine"];
                     var currentStateIndex = data["commands"][key]["state_ref"]["state_index"];
                     var commandType = data["commands"][key]["type"];
-
                     if (commandType == "replace_state")
                     {
-
                         // TODO: it's possible that data["commands"][key]["prev_state_ref"] will be different that the current state machine, states will be rejected,
                         //       which will cause Spotify to request /state_conflict. see _rejectState(). Is it our fault?
-
                         data["commands"][key]["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "state_conflict_replace_state_command");
-
                     }
                 }
-
                 isFetchInterceptionWorking = true;
             }
-
             return data;
-
         }).catch(function(reason)
         {
             console.error(reason);
             return originalJsonPromise;
         });
-
         };
-
         return statesManipuationQueue.enqueue(promise, null);
-
     }.bind(this, request);
-
     return responseBody;
 }
-
 async function manipulateStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source="")
 {
     var didRequestFutureStates = false;
-
     do
     {
         var removedAds = false;
-
         var originalStateMachineId = stateMachine["state_machine_id"];
         var originalStateId = stateMachine["states"][startingStateIndex]["state_id"];
-
         console.log("SpotiAds: We see state machine: " + getStateMachineDestripction(stateMachine) + " (state machine id: " + stateMachine["state_machine_id"] + ", source:" + debug_source + ")");
-
         for (var i = 0; i < stateMachine["states"].length; i++)
         {
             var state = stateMachine["states"][i];
             var stateId = stateMachine["states"][i]["state_id"];
             var currentStateIdNormalized = getFutureStateId(stateId);
-
             var trackID = state["track"];
             var track = stateMachine["tracks"][trackID];
-
             if (track == null) continue; // might happen for filler states
-
             var trackURI = track["metadata"]["uri"];
             var trackName = track["metadata"]["name"];
-
             var newState = structuredClone(state);
-
             if (isAd(state, stateMachine))
             {
                 console.log("SpotifyAdRemover: Encountered ad in " + trackURI);
-
                 newState = getNextAdFreeState(stateMachine, stateId, i);
                 if (isAd(newState, stateMachine))
                 {
                     // We can't really skip over this state because we don't know where to skip to.
                     // We will request even more states, or, if this fails, at least shorten the ad.
                     console.log("SpotiAds: Requesting future state machine.");
-
                     try
                     {
                         var [nextNextState, futureStateMachine] = await getNextAdFreeStateFromFutureStateMachine(stateMachine, newState);
                         if (nextNextState != null)
                         {
                             newState = nextNextState;
-
                             var originalNextStateId = newState["state_id"];
-
                             var nextTrackName = futureStateMachine["tracks"][newState["track"]]["metadata"]["name"];
                             console.log("SpotiAds: after the ad we have track '" + nextTrackName + "'.");
-
                             // Fix the new state to be suitable for replacing in the currenet state machine.
                             console.log("Spotiads: Inserting new state from future state machine");
                             var wantedStateId = state["state_id"];
                             var [fixedState, fixedStateMachine] = fixStateForOldStateMachine(newState, futureStateMachine, wantedStateId, stateMachine);
                             newState = fixedState;
                             stateMachine = fixedStateMachine;
-
                             if (i == startingStateIndex && !isReplacingState)
                             {
                                 // Our new state is going to be played now, let's point the player at the future state machine.
                                 newState["state_id"] = originalNextStateId;
                                 stateMachine["state_machine_id"] = futureStateMachine["state_machine_id"];
-
                                 console.log("SpotifyAdRemover: Removed ad at " + trackURI + ", more complex flow");
                             }
                         }
@@ -568,9 +478,7 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
                         {
                             state = shortenedState(state, track);
                             console.log("SpotifyAdRemover: Shortned ad");
-
                         }
-
                     }
                     catch (exception)
                     {
@@ -579,28 +487,23 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
                         console.error(exception);
                         console.error(exception.stack);
                     }
-
                     didRequestFutureStates = true;
                 }
                 else
                 {
                     console.log("SpotiAds: after the ad we have track '" + nextTrackName + "'. (easy flow)");
                 }
-
                 // We don't want tracks with no transitions
                 // We'll request more states to discover the better state with the transitions
                 if ((newState["transitions"]["advance"] == null && newState["disallow_seeking"] == true) && !isAd(newState, futureStateMachine))
                 {
                     var track = stateMachine["tracks"][newState["track"]];
                     var trackName = track["metadata"]["name"];
-
                     console.log("SpotiAds: Encountered a track '" + trackName + "' that disallows seeking. Requesting more states");
-
                     [futureStateMachine, stateRef] = await getStates(stateMachine["state_machine_id"], newState["state_id"]);
                     if (futureStateMachine != null)
                     {
                         newState = futureStateMachine["states"][stateRef["state_index"]];
-
                         console.log("Spotiads: Inserting fixed track with transitions from future state machine");
                         var wantedStateId = state["state_id"];
                         var [fixedState, fixedStateMachine] = fixStateForOldStateMachine(newState, futureStateMachine, wantedStateId, stateMachine);
@@ -610,69 +513,50 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
                     else
                     {
                         console.log("SpotiAds: Can't get more states, hacking the next state");
-
                         newState["disallow_seeking"] = false;
                         newState["restrictions"] = {};
                     }
-
                     if (i == startingStateIndex && !isReplacingState)
                     {
                         // Our new state is going to be played now, let's point the player at the future state machine.
                         newState["state_id"] = originalNextStateId;
                         stateMachine["state_machine_id"] = futureStateMachine["state_machine_id"];
-
                         console.log("SpotifyAdRemover: Removed ad at " + trackURI + ", more complex flow (2)");
                     }
-
                     didRequestFutureStates = true;
-
                 }
-
                 currentStateIdNormalized = getFutureStateId(newState["state_id"]);
-
                 if (newState != null && state["state_id"] != newState["state_id"])
                 {
                     // We succesfully found the next state after the ad.
                     // Remove ads in the casual flow
                     // Make this state equal to the next one.
                     state = newState;
-
                     tamperedStatesMap[currentStateIdNormalized] = trackURI;
-
                     removedAds = true;
                 }
-
                 // Replace the current state.
                 stateMachine["states"][i] = state;
             }
-
             if (i == startingStateIndex && !isReplacingState && tamperedStatesMap[currentStateIdNormalized] != null)
             {
                 // Our new ad-free state is going to be played now.
                 var removedAdUri = tamperedStatesMap[currentStateIdNormalized];
                 console.log("SpotifyAdRemover: Removed ad at " + removedAdUri);
-
             }
-
         }
-
     }
     while (removedAds);
-
     stateMachine = tryToRemoveAdTracks(stateMachine);
-
     currentTracks = stateMachine["tracks"];
-
     if (didRequestFutureStates)
     {
         // make the original states request again to update the state to the original
         console.log("SpotiAds: Putting the state machine back to the original state");
         getStates(originalStateMachineId, originalStateId);
     }
-
     return stateMachine;
 }
-
 async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState)
 {
     try
@@ -684,41 +568,32 @@ async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState)
         {
             var stateMachineId = futureStateMachine["state_machine_id"];
             var stateId = nextState["state_id"];
-
             if (nextState["state_id"].includes("future_"))
             {
                 stateMachineId = nextState["state_id"].split("+")[1];
                 stateId = nextState["state_id"].split("+")[2];
             }
-
             [futureStateMachine, stateRef] = await getStates(stateMachineId, stateId);
             nextState = getNextAdFreeState(futureStateMachine, stateId);
-
             j++;
         }
         while (isAd(nextState, futureStateMachine) && j < maxAttempts)
-
         if (isAd(nextState, futureStateMachine))
         {
             // print out debugging information
             console.error("could not find the next ad-free state. state machine was:");
             console.error(futureStateMachine);
-
             return [null, futureStateMachine];
         }
-
     }
     catch (exception)
     {
         console.error(exception);
         console.error(exception.stack);
-
         return [null, futureStateMachine];
     }
-
     return [nextState, futureStateMachine];
 }
-
 function fixStateForOldStateMachine(stateFromNewStateMachineToFix, futureStateMachine, expectedStateId, stateMachine)
 {
     var futureStateMachineId = futureStateMachine["state_machine_id"];
@@ -726,27 +601,21 @@ function fixStateForOldStateMachine(stateFromNewStateMachineToFix, futureStateMa
     var track = futureStateMachine["tracks"][stateFromNewStateMachineToFix["track"]];
     stateMachine["tracks"].push(track);
     stateFromNewStateMachineToFix["track"] = stateMachine["tracks"].length - 1;
-
     // Fix transitions
     // TODO: we can do this recursively
     for (const [key, value] of Object.entries(stateFromNewStateMachineToFix["transitions"]))
     {
         if (value == null) continue;
-
         var transitionStateId = value["state_index"];
         var transitionState = futureStateMachine["states"][transitionStateId];
         if (transitionState == null) continue; // this might happen, maybe it means "fetch for more states"
-
         var track = futureStateMachine["tracks"][transitionState["track"]];
         stateMachine["tracks"].push(track);
         transitionState["track"] = stateMachine["tracks"].length - 1;
         transitionState["state_id"] = "_future_+" + futureStateMachineId + "+" + transitionState["state_id"];
-
         stateMachine["states"].push(transitionState);
         stateFromNewStateMachineToFix["transitions"][key]["state_index"] = stateMachine["states"].length - 1;
-
     }
-
     // Maybe we don't want that. let the calling code do this in a more controlled fashion
     // for (var i = 0; i < stateMachine["states"].length; i++)
     // {
@@ -757,46 +626,36 @@ function fixStateForOldStateMachine(stateFromNewStateMachineToFix, futureStateMa
     //         stateMachine[i] = stateFromNewStateMachineToFix
     //     }
     // }
-
     return [stateFromNewStateMachineToFix, stateMachine];
 }
-
 function shortenedState(state, track)
 {
     var trackDuration = track["metadata"]["duration"];
-
     state["disallow_seeking"] = false;
     state["restrictions"] = {};
     state["initial_playback_position"] = trackDuration;
     state["position_offset"] = trackDuration;
-
     return state;
 }
-
 async function getStates(stateMachineId, startingStateId, maxRetries = 3)
 {
     if (startingStateId.includes("future_"))
     {
         console.log("SpotiAds: getStates: changing request to reflect future state machine");
-
         stateMachineId = startingStateId.split("+")[1];
         startingStateId = startingStateId.split("+")[2];
     }
-
     var statesUrl = "https://spclient.wg.spotify.com/track-playback/v1/devices/" + deviceId + "/state";
     var body = {"seq_num":0,"state_ref":{"state_machine_id":stateMachineId, "state_id": startingStateId,"paused":false},
             "sub_state":{"playback_speed":1,"position":0,"duration":0,"stream_time":0,"media_type":"AUDIO","bitrate":160000},"previous_position":0
             ,"debug_source":"resume"};
-
     var authorizationHeaderToPut = authorizationHeader ? authorizationHeader : "Bearer " + accessToken;
     var clientTokenToPut = clientToken ? clientToken : "";
-
     var result = await originalFetch.call(window, statesUrl,{method: 'PUT', headers: {
         'Authorization': authorizationHeaderToPut, 'client-token': clientTokenToPut,  'Content-Type': 'application/json'},
          body: JSON.stringify(body)});
     if (result.status != 200)
     {
-
         if (result.status == 204)
         {
             // TODO: what does 204 No Content mean? no future state machine known?
@@ -804,64 +663,50 @@ async function getStates(stateMachineId, startingStateId, maxRetries = 3)
         // Assume the access token has expired without checking it too much.
         // var resultJson = await result.json();
         // var looksExpired = (resultJson["error"] && resultJson["error"]["message"] == "The access token expired")
-
         onStateMachineError(result.status);
         throw Error("SpotiAds: Failed to get states, http status code " + result.status);
-
         // // Refresh the access token and try again.
         // await refreshAccessToken();
         // result = await originalFetch.call(window, statesUrl,{method: 'PUT', headers: {'Authorization': "Bearer " + accessToken, 'Content-Type': 'application/json'},
         //                                                     body: JSON.stringify(body)});
     }
-
     // TODO: There is a case where the request will return a 502 Error code.
     // This will return a null stateMachine, and just shorten the ad instead of removing it.
     // Retry for now
-
     var resultJson = await result.json();
     var stateMachine = resultJson["state_machine"];
     var stateRef = resultJson["updated_state_ref"];
     if (!stateMachine)
     {
-
         if (maxRetries > 0)
             return getStates(stateMachineId, startingStateId, --maxRetries)
     }
-
     return [stateMachine, stateRef];
 }
-
 function* statesGenerator(states, startingStateIndex = 2, nextStateName = "skip_next")
 {
     var currentState = states[startingStateIndex];
     var iterationCount = 0;
-
     for (var state = currentState; state != undefined; state = states[state["transitions"][nextStateName]["state_index"]])
     {
         iterationCount++;
-
         yield state;
-
         var nextTransition = state["transitions"][nextStateName];
         if (nextTransition == undefined) break;
     }
-
     return iterationCount;
 }
-
 function getNextAdFreeState(stateMachine, stateId, startingStateIndex = 2, excludeAds = true)
 {
     var states = stateMachine["states"];
     var tracks = stateMachine["tracks"];
     var previousState = null;
-
     var foundTrack = false;
     var foundState = false;
     for (var state of statesGenerator(states, startingStateIndex, "advance"))
     {
         var trackID = state["track"];
         var track = tracks[trackID];
-
         // if (foundTrack)
         // {
         //     if (excludeAds && track["content_type"] == "AD") continue;
@@ -872,23 +717,17 @@ function getNextAdFreeState(stateMachine, stateId, startingStateIndex = 2, exclu
             if (excludeAds && track["content_type"] == "AD") continue;
             return state;
         }
-
         if (previousState == state)
         {
             console.error("Cyclic state machine detected.");
-
             return state;
         }
-
         //foundTrack = (track["metadata"]["uri"] == sourceTrack["metadata"]["uri"]);
         foundState = state["state_id"] == stateId;
         previousState = state;
-
     }
-
     return state;
 }
-
 function getStateMachineDestripction(stateMachine, startingStateIndex = 2)
 {
     var stateMachineString = "";
@@ -897,54 +736,41 @@ function getStateMachineDestripction(stateMachine, startingStateIndex = 2)
         var trackID = state["track"];
         var track = stateMachine["tracks"][trackID];
         var trackName = track["metadata"]["name"];
-
         if (isAd(state, stateMachine))
         {
             trackName = "[AD] " + trackName;
         }
-
         stateMachineString += trackName + " > ";
     }
-
     return stateMachineString;
 }
-
 function getFutureStateId(stateId)
 {
     if (stateId.includes("future_"))
         stateId = stateId.split("+")[2];
-
     return stateId;
 }
-
 function getPreviousState(stateMachine, sourceTrack, startingStateIndex = 2)
 {
     var states = stateMachine["states"];
     var tracks = stateMachine["tracks"];
-
     var foundTrack = false;
     for (var state of statesGenerator(states, startingStateIndex, "advance"))
     {
         if (state["transitions"]["advance"] == null) return null;
-
         var nextState = states[state["transitions"]["advance"]["state_index"]];
         var nextStateTrack = tracks[nextState["track"]];
-
         if (nextStateTrack["metadata"]["uri"] == sourceTrack["metadata"]["uri"])
         {
             return state;
         }
-
     }
-
     return null;
 }
-
 // TODO: this function does not actually help in removing ads, it's useless
 function tryToRemoveAdTracks(stateMachine)
 {
     var tracks = stateMachine["tracks"];
-
     for (var i = 0; i < tracks.length; i++)
     {
         if (isAdTrack(tracks[i]))
@@ -954,44 +780,34 @@ function tryToRemoveAdTracks(stateMachine)
             tracks[i] = null;
         }
     }
-
     stateMachine["tracks"] = tracks;
     return stateMachine;
 }
-
 function isAd(state, stateMachine)
 {
     var states = stateMachine["states"];
     var tracks = stateMachine["tracks"];
-
     var trackID = state["track"];
     var track = tracks[trackID];
-
     if (state["state_id"].includes("filler"))
     {
         //console.log("SpotiAds: Encountered filler state, assuming not an ad");
         return false;
     }
-
     return isAdTrack(track);
 }
-
 function isAdTrack(track)
 {
     if (track == null) return false;
-
     var trackURI = track["metadata"]["uri"];
-
     return trackURI.includes(":ad:");
 }
-
 function onStateMachineError(code) {
     console.warn('[Spotify scriptlet] State request failed:', code);
 }
 function onTooManyRequestsError() {
     console.warn('[Spotify scriptlet] Spotify returned HTTP 429; pause playback and retry later.');
 }
-
     window[installed] = true;
     console.info('[Spotify scriptlet] Loaded. This confirms injection only, not ad removal.');
 })();
