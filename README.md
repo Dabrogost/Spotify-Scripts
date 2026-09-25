@@ -47,10 +47,10 @@ uBlock Origin already includes Spotify-specific filtering that redirects known a
 3. Open **My filters** and add:
 
    ```adblock
-   ! Let spotify-ad-skip handle Spotify media instead of uBO's built-in redirects
+   ! Let the script handle Spotify media instead of uBO's built-in redirects
    @@*$media,domain=open.spotify.com
 
-   ! Run spotify-ad-skip
+   ! Run the script on open.spotify.com only
    open.spotify.com##+js(spotify-ad-skip)
    ```
 
