@@ -2,8 +2,8 @@
 ! Host this file at a raw HTTPS URL, add it in User Scriptlets, then save:
 ! open.spotify.com##+js(spotify-ad-skip)
 ! Reload Spotify after enabling or removing the rule. Play audio in this tab.
-! Tested with Chroma in live Spotify Web Player sessions Google Chrome Version 153.0.8010.53 (Official Build) (64-bit) on 2026-09-24.
-! uBlock Origin compatibility is currently untested.
+! Tested with Chroma in live Spotify Web Player sessions with Google Chrome Version 153.0.8010.53 (Official Build) (64-bit).
+! Tested with uBlock Origin in live Spotify Web Player sessions with Firefox Version 156.0.1 (official Build) (64-bit).
 ! Derived from tomer8007/spotify-web-ads-remover, GPL-3.0.
 ! Source: https://github.com/tomer8007/spotify-web-ads-remover/tree/fd6b71475ddb3f89607902c174652fd14d226055
 ! Modified 2026-09-24: bundle queue and WebSocket helper; remove extension UI,
