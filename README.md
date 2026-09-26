@@ -64,7 +64,7 @@ The file includes its required helpers. No additional scripts or separate Spotif
 
 ## Status
 
-Tested in multiple live Spotify Web Player sessions with Chroma: the script detected ads, replaced their playback path with music, and logged removal while listening continued without reported playback issues. This is an experiment, and Spotify changes may affect it.
+Tested in multiple live Spotify Web Player sessions with Chroma with Chrome and Edge and uBlock Origin with Firefox: the script detected ads, replaced their playback path with music, and logged removal while listening continued without reported playback issues. This is an experiment, and Spotify changes may affect it.
 
 * Applies to audio playing in the Spotify browser tab, not the desktop/mobile apps or another Spotify Connect device.
 * A `Loaded` console message confirms injection only. `Encountered ad` and `Removed ad` messages show the ad-handling path running.
