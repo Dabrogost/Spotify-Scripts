@@ -14,19 +14,21 @@ https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spot
 
 ### Chroma Ad-Blocker (working 09/25/26)
 
-1. Open Chroma settings → **User Scriptlets** → **Add URL** and paste:
+1. Open Chroma settings and toggle **Spotify Ad Block** to **Off**.
+
+2. Open Chroma settings → **User Scriptlets** → **Add URL** and paste:
 
    ```text
    https://raw.githubusercontent.com/Dabrogost/Spotify-Scripts/refs/heads/main/spotify-ad-skip.txt
    ```
 
-2. Add this rule and click **Save Rules**:
+3. Add this rule and click **Save Rules**:
 
    ```adblock
    open.spotify.com##+js(spotify-ad-skip)
    ```
 
-3. Reload Spotify and play music in the browser tab.
+4. Reload Spotify and play music in the browser tab.
 
 Chroma's master protection and Chrome's **Allow User Scripts** setting must be enabled. On Chrome 122–137, enable **Developer Mode** instead.
 
