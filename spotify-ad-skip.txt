@@ -211,6 +211,15 @@ var accessToken = "";
 var clientToken = "";
 var authorizationHeader = "";
 var statesManipuationQueue = new PromiseQueue();
+let rateLimitedUntil = 0;
+let activeAdOperation = null;
+let playbackRevision = 0;
+function cancelAdSearchForPlaybackChange() {
+    playbackRevision++;
+    if (!activeAdOperation) return;
+    activeAdOperation.cancelledByPlayback = true;
+    activeAdOperation.controller.abort();
+}
 // Keep UI isolated from Spotify styles. Only lock during ad-state manipulation.
 const playbackUI = createPlaybackUI();
 function createPlaybackUI() {
@@ -450,7 +459,12 @@ function createPlaybackUI() {
                 render();
             }, 250);
         },
-        warning(message) {
+        warning(message, releaseControls = false) {
+            if (releaseControls) {
+                generation++;
+                clearTimeout(releaseTimer);
+                unlock();
+            }
             if (locked) return;
             model = { kind: 'warning', title: 'Spotify needs a moment', detail: message };
             render();
@@ -470,6 +484,10 @@ window.fetch = function(url, init)
         if (init.headers["client-token"])
             clientToken = init.headers["client-token"];
         var request = JSON.parse(init.body);
+        if (request["state_ref"]?.["paused"] === true || request["debug_source"] === 'pause') {
+            cancelAdSearchForPlaybackChange();
+        }
+        const responseRevision = playbackRevision;
         if (request["state_ref"]["state_id"].includes("future_"))
         {
             console.log("[Spotify Ad Script] Changing Spotify's states request to reflect future state machine");
@@ -482,8 +500,11 @@ window.fetch = function(url, init)
         var promise = async function(fetchArguments) {
         return originalFetch.call(window, fetchArguments.url, fetchArguments.init).then(function(response)
         {
-            // TODO: what do we do  on 429 here?
-            var modifiedResponse = onStatesFetchResponseReceived(url, init, response);
+            if (response.status === 429) {
+                onTooManyRequestsError(response);
+                return response;
+            }
+            var modifiedResponse = onStatesFetchResponseReceived(url, init, response, responseRevision);
             return modifiedResponse;
         });
         };
@@ -504,8 +525,12 @@ window.fetch = function(url, init)
     }
     else if (url.includes("connect-state"))
     {
-        var promise = async function(fetchArguments) {
         var request = JSON.parse(init.body);
+        if (['play', 'pause', 'resume', 'skip_next', 'skip_prev', 'seek'].includes(request["command"]?.["endpoint"])) {
+            // Cancel before queuing the command, so it does not wait for the old search.
+            cancelAdSearchForPlaybackChange();
+        }
+        var promise = async function(fetchArguments) {
         if (request["command"] != null)
         {
             console.log("[Spotify Ad Script] We see connect-state with endpoint: " + request["command"]["endpoint"]);
@@ -514,7 +539,10 @@ window.fetch = function(url, init)
         {
             console.log("[Spotify Ad Script] We see connect-state with member_type: " + request["member_type"]);
         }
-        return originalFetch.call(window, fetchArguments.url, fetchArguments.init);
+        return originalFetch.call(window, fetchArguments.url, fetchArguments.init).then(function(response) {
+            if (response.status === 429) onTooManyRequestsError(response);
+            return response;
+        });
         }
         return statesManipuationQueue.enqueue(promise, {url: url, init: init});
     }
@@ -525,7 +553,7 @@ window.fetch = function(url, init)
         {
             if (response.status == 429)
             {
-                onTooManyRequestsError();
+                onTooManyRequestsError(response);
             }
             return response;
         });
@@ -551,7 +579,9 @@ async function onAccessTokenResponseIntercepted(accessTokenResponse)
 //
 wsHook.after = function(messageEvent, url)
 {
+    const responseRevision = playbackRevision;
     var promise = async function(messageEvent) {
+    if (responseRevision !== playbackRevision) return messageEvent;
     try
     {
         var data = JSON.parse(messageEvent.data);
@@ -573,7 +603,7 @@ wsHook.after = function(messageEvent, url)
                     //console.log("[Spotify Ad Script] Received state machine over WebSocket, manipulating it");
                     // TODO: it's possible that payload["prev_state_ref"] will be different that the current state machine, states will be rejected,
                     //       which will cause Spotify to request /state_conflict. see _rejectState(). Is it our fault?
-                    payload["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "web_socket_replace_state");
+                    payload["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "web_socket_replace_state", stateRef["paused"] === true);
                     data.payloads[i] = payload;
                     isWebScoketInterceptionWorking = true;
                 }
@@ -594,7 +624,7 @@ wsHook.after = function(messageEvent, url)
                         // instead of having false positives
                         // showMultiDeviceWarning();
                     }
-                    if (payload.cluster.player_state.track.provider == "ads/inject_tracks")
+                    if (Date.now() >= rateLimitedUntil && payload.cluster.player_state.track.provider == "ads/inject_tracks")
                     {
                         console.log("[Spotify Ad Script] Spotify trying to inject ads? advertiser: " + payload.cluster.player_state.track.metadata.advertiser);
                         //payload.cluster.player_state.restrictions = {};
@@ -616,7 +646,7 @@ wsHook.after = function(messageEvent, url)
     };
     return statesManipuationQueue.enqueue(promise, messageEvent);
 }
-function onStatesFetchResponseReceived(url, init, responseBody)
+function onStatesFetchResponseReceived(url, init, responseBody, responseRevision)
 {
     var requestBody = init.body;
     var request = JSON.parse(requestBody);
@@ -626,6 +656,8 @@ function onStatesFetchResponseReceived(url, init, responseBody)
         var promise = async function() {
         return originalJsonPromise.then(async function(data)
         {
+            // A queued response may belong to a song the user has already skipped.
+            if (responseRevision !== playbackRevision) return data;
             var stateMachine = data["state_machine"];
             var updatedStateRef = data["updated_state_ref"];
             var commands = data["commands"];
@@ -636,7 +668,7 @@ function onStatesFetchResponseReceived(url, init, responseBody)
                 if (stateMachine == undefined || updatedStateRef == null) return data;
                 var currentStateIndex = updatedStateRef["state_index"];
                 var debug_source = request["debug_source"];
-                data["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, false, debug_source);
+                data["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, false, debug_source, request["state_ref"]?.["paused"] === true);
                 // if (debug_source == "modify_current_state")
                 // {
                 //     // HACKKKKKKKKKKKKK
@@ -668,7 +700,7 @@ function onStatesFetchResponseReceived(url, init, responseBody)
                     {
                         // TODO: it's possible that data["commands"][key]["prev_state_ref"] will be different that the current state machine, states will be rejected,
                         //       which will cause Spotify to request /state_conflict. see _rejectState(). Is it our fault?
-                        data["commands"][key]["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "state_conflict_replace_state_command");
+                        data["commands"][key]["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "state_conflict_replace_state_command", request["state_ref"]?.["paused"] === true || data["commands"][key]["state_ref"]["paused"] === true);
                     }
                 }
                 isFetchInterceptionWorking = true;
@@ -684,14 +716,23 @@ function onStatesFetchResponseReceived(url, init, responseBody)
     }.bind(this, request);
     return responseBody;
 }
-async function manipulateStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source="")
+async function manipulateStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source="", paused = false)
 {
-    // Ordinary playback updates should never flash the UI or disable controls.
-    if (!stateMachine?.tracks?.some(track => isAdTrack(track))) {
+    // Hand Spotify its original playback states during a rate-limit cooldown.
+    // Do not restart the popup, lock controls, or launch more ad searches.
+    if (Date.now() < rateLimitedUntil) {
+        currentTracks = stateMachine?.tracks || [];
+        return stateMachine;
+    }
+    // Looking ahead sends synthetic resume requests. Never do this while music
+    // is current or playback is paused merely because a later state contains an ad.
+    const currentState = stateMachine?.states?.[startingStateIndex];
+    if (paused || debug_source === 'pause' || !currentState || !isAd(currentState, stateMachine)) {
         currentTracks = stateMachine?.tracks || [];
         return stateMachine;
     }
     const operation = { controller: new AbortController(), requestedStates: false, fallback: false };
+    activeAdOperation = operation;
     const previousTamperedStates = { ...tamperedStatesMap };
     const previousTracks = currentTracks;
     const timer = setTimeout(() => operation.controller.abort(), 15000);
@@ -710,6 +751,13 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
     } catch (error) {
         tamperedStatesMap = previousTamperedStates;
         currentTracks = previousTracks;
+        // The 429 handler already displayed the cooldown warning and unlocked UI.
+        if (operation.rateLimited) return stateMachine;
+        if (operation.cancelledByPlayback) {
+            warning = 'Playback changed. The ad search was stopped and controls are available again.';
+            console.info('[Spotify Ad Script] Ad search cancelled after a playback change.');
+            return stateMachine;
+        }
         warning = operation.controller.signal.aborted
             ? 'The search timed out and was stopped. Controls are available again. If playback stalls, reload Spotify.'
             : 'The playback update could not finish. Controls are available again. If playback stalls, reload Spotify.';
@@ -717,7 +765,8 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
         return stateMachine;
     } finally {
         clearTimeout(timer);
-        playbackUI.finish(warning);
+        if (activeAdOperation === operation) activeAdOperation = null;
+        if (!operation.rateLimited) playbackUI.finish(warning);
     }
 }
 async function manipulateAdStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source, operation)
@@ -743,6 +792,9 @@ async function manipulateAdStateMachine(stateMachine, startingStateIndex, isRepl
             var newState = structuredClone(state);
             if (isAd(state, stateMachine))
             {
+                // Process only the active ad. Other ad slots can describe the same
+                // break; probing each of them can advance playback multiple times.
+                if (i !== startingStateIndex) continue;
                 console.log("[Spotify Ad Script] Encountered ad in " + trackURI);
                 newState = getNextAdFreeState(stateMachine, stateId, i);
                 if (isAd(newState, stateMachine))
@@ -936,6 +988,11 @@ function shortenedState(state, track)
 async function getStates(stateMachineId, startingStateId, maxRetries = 3, operation)
 {
     operation.controller.signal.throwIfAborted();
+    if (Date.now() < rateLimitedUntil) {
+        operation.rateLimited = true;
+        operation.controller.abort();
+        operation.controller.signal.throwIfAborted();
+    }
     operation.requestedStates = true;
     if (startingStateId.includes("future_"))
     {
@@ -952,6 +1009,7 @@ async function getStates(stateMachineId, startingStateId, maxRetries = 3, operat
     var result = await originalFetch.call(window, statesUrl,{method: 'PUT', headers: {
         'Authorization': authorizationHeaderToPut, 'client-token': clientTokenToPut,  'Content-Type': 'application/json'},
          body: JSON.stringify(body), signal: operation.controller.signal});
+    if (result.status === 429) onTooManyRequestsError(result);
     operation.controller.signal.throwIfAborted();
     if (result.status != 200)
     {
@@ -1111,9 +1169,27 @@ function isAdTrack(track)
 function onStateMachineError(code) {
     console.warn('[Spotify Ad Script] State request failed:', code);
 }
-function onTooManyRequestsError() {
-    console.warn('[Spotify Ad Script] Spotify returned HTTP 429; pause playback and retry later.');
-    playbackUI.warning('Spotify is limiting requests. Pause playback and try again later.');
+function onTooManyRequestsError(response) {
+    const now = Date.now();
+    const wasCoolingDown = now < rateLimitedUntil;
+    const retryAfter = response?.headers?.get('Retry-After')?.trim();
+    let delay = 60000;
+    if (retryAfter) {
+        const requestedDelay = /^\d+$/.test(retryAfter)
+            ? Number(retryAfter) * 1000
+            : Date.parse(retryAfter) - now;
+        if (Number.isFinite(requestedDelay)) delay = Math.max(delay, requestedDelay);
+    }
+    // Later 429s can extend the pause, but must not restart the fading popup.
+    rateLimitedUntil = Math.max(rateLimitedUntil, now + delay);
+    if (activeAdOperation) {
+        activeAdOperation.rateLimited = true;
+        activeAdOperation.controller.abort();
+    }
+    if (wasCoolingDown) return;
+    const seconds = Math.ceil((rateLimitedUntil - now) / 1000);
+    console.warn('[Spotify Ad Script] Spotify returned HTTP 429; ad handling is paused for at least ' + seconds + ' seconds. Pause playback and try again later.');
+    playbackUI.warning('Spotify is limiting playback requests. Ad handling is paused. Pause playback and wait at least ' + seconds + ' seconds before trying again. Controls are available.', true);
 }
     window[installed] = true;
     console.info('[Spotify Ad Script] Loaded. This confirms injection only, not ad removal.');
