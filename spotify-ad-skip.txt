@@ -1,17 +1,5 @@
-! Spotify ad skip — experimental standalone Chroma/uBlock resource.
-! Host this file at a raw HTTPS URL, add it in User Scriptlets, then save:
-! open.spotify.com##+js(spotify-ad-skip)
-! Reload Spotify after enabling or removing the rule. Play audio in this tab.
-! Tested with Chroma in live Spotify Web Player sessions with Google Chrome Version 153.0.8010.53 (Official Build) (64-bit).
-! Tested with uBlock Origin in live Spotify Web Player sessions with Firefox Version 156.0.1 (official Build) (64-bit).
-! Derived from tomer8007/spotify-web-ads-remover, GPL-3.0.
-! Source: https://github.com/tomer8007/spotify-web-ads-remover/tree/fd6b71475ddb3f89607902c174652fd14d226055
-! Modified 2026-09-24: bundle queue and WebSocket helper; remove extension UI,
-! counters and DOM observers; add host/duplicate guards and local stateRef.
-! Upstream playback logic is retained, including its experimental limitations.
-! License: GNU GPL v3. See LICENSE in this repository.
-!
-spotify-ad-skip.js text/javascript
+// Spotify Ad Skip. Derived from tomer8007/spotify-web-ads-remover (GPL-3.0).
+// Edit this source and rebuild spotify-ad-skip.txt using scripts/build-resource.cjs.
 (function () {
     if (location.hostname !== 'open.spotify.com' || window.top !== window) return;
     const installed = Symbol.for('chroma.spotify-ad-skip');
@@ -129,7 +117,7 @@ class PromiseQueue {
 						_send.apply(WSObject, [newData]);
 				}).catch(function(e)
 				{
-					console.error(e);
+					console.error('[Spotify Ad Script]', e);
 					_send.apply(WSObject, [newData]);
 				});
 			}
@@ -143,7 +131,7 @@ class PromiseQueue {
 			{
 				if (!onmessageFunction)
 				{
-					console.log("warning: no onmessageFunction");
+					console.log('[Spotify Ad Script]', "warning: no onmessageFunction");
 					return;
 				}
 				wsHook.after(new MutableMessageEvent(event), this.url).then(function(modifiedEvent)
@@ -152,7 +140,7 @@ class PromiseQueue {
 						onmessageFunction.apply(this, [modifiedEvent]);
 				}).catch(function(e)
 				{
-					console.error(e);
+					console.error('[Spotify Ad Script]', e);
 					onmessageFunction.apply(this, [event]);
 				});
 				//e = new MessageEvent(e.type, e);
@@ -195,6 +183,241 @@ var accessToken = "";
 var clientToken = "";
 var authorizationHeader = "";
 var statesManipuationQueue = new PromiseQueue();
+// Keep UI isolated from Spotify styles. Only lock during ad-state manipulation.
+const playbackUI = createPlaybackUI();
+function createPlaybackUI() {
+    const reason = 'Finding an ad-free stream. Playback controls will be available shortly.';
+    const marker = 'data-spotify-ad-skip-locked';
+    // Prefer Spotify test IDs to translated labels or generated CSS class names.
+    const targets = [
+        '[data-testid="control-button-skip-back"]',
+        '[data-testid="control-button-skip-forward"]',
+        '[data-testid="control-button-playpause"]',
+        '[data-testid="control-button-shuffle"]',
+        '[data-testid="control-button-repeat"]',
+        '[data-testid="playback-progressbar"]',
+        '[data-testid="tracklist-row"]',
+        '[data-testid="tracklist"] [role="row"][aria-rowindex]',
+        '[data-testid="play-button"]',
+        '[data-testid="play-button-changed"]',
+        '[data-testid="queue-row"]',
+        '[data-testid="context-menu"] [role="menuitem"]',
+        'a[href^="/track/"]',
+        'a[href^="spotify:track:"]'
+    ].join(',');
+    const saved = new Map();
+    let locked = false;
+    let observer;
+    let host;
+    let root;
+    let guardStyle;
+    let title;
+    let detail;
+    let tooltip;
+    let toggle;
+    let compactTimer;
+    let releaseTimer;
+    let generation = 0;
+    let model = { kind: 'ready', title: 'Spotify Ad Skip is ready', detail: 'Loaded in this tab. Waiting for ads.' };
+
+    function mount() {
+        if (host || !document.body) return;
+        host = document.createElement('div');
+        host.id = 'spotify-ad-skip-ui';
+        host.style.cssText = 'all:initial;position:fixed;right:16px;bottom:104px;z-index:2147483647;';
+        const shadow = host.attachShadow({ mode: 'closed' });
+        const style = document.createElement('style');
+        style.textContent = `
+            :host { color-scheme: dark; }
+            * { box-sizing: border-box; }
+            .card { width: min(340px, calc(100vw - 32px)); padding: 16px; border: 1px solid #414141;
+                border-radius: 12px; background: #181818; color: #fff; box-shadow: 0 8px 28px #0008;
+                font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+            .heading { display: flex; align-items: center; gap: 10px; }
+            .dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: #1ed760; }
+            .busy .dot { background: transparent; border: 2px solid #535353; border-top-color: #1ed760;
+                animation: spin 1s linear infinite; }
+            .warning .dot { background: #f5c969; }
+            .title { flex: 1; font-weight: 700; font-size: 13px; }
+            .detail { margin: 8px 28px 0 20px; color: #b3b3b3; font-size: 12px; }
+            button { border: 0; border-radius: 50%; width: 28px; height: 28px; padding: 0;
+                background: transparent; color: #b3b3b3; cursor: pointer; font-size: 18px; }
+            button:hover { background: #333; color: #fff; }
+            button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+            .compact { padding: 10px 12px; }
+            .compact .detail { display: none; }
+            .tooltip { position: fixed; max-width: min(280px, calc(100vw - 16px)); padding: 10px 12px;
+                border-radius: 6px; background: #333; color: #fff; box-shadow: 0 4px 16px #0009;
+                font: 12px/1.4 system-ui, sans-serif; pointer-events: none; }
+            [hidden] { display: none !important; }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            @media (prefers-reduced-motion: reduce) { .busy .dot { animation: none; } }
+        `;
+        root = document.createElement('section');
+        root.className = 'card';
+        root.setAttribute('aria-label', 'Spotify Ad Skip status');
+        const heading = document.createElement('div');
+        heading.className = 'heading';
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.setAttribute('aria-hidden', 'true');
+        const status = document.createElement('div');
+        status.style.flex = '1';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        status.setAttribute('aria-atomic', 'true');
+        title = document.createElement('div');
+        title.className = 'title';
+        detail = document.createElement('div');
+        detail.className = 'detail';
+        detail.style.marginLeft = '0';
+        status.append(title, detail);
+        toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.addEventListener('click', () => setCompact(!root.classList.contains('compact')));
+        heading.append(dot, status, toggle);
+        root.append(heading);
+        tooltip = document.createElement('div');
+        tooltip.className = 'tooltip';
+        tooltip.setAttribute('role', 'tooltip');
+        tooltip.textContent = reason;
+        tooltip.hidden = true;
+        shadow.append(style, root, tooltip);
+        document.body.append(host);
+        guardStyle = document.createElement('style');
+        guardStyle.textContent = `[${marker}] { opacity: .38 !important; cursor: not-allowed !important; }
+            [${marker}] * { cursor: not-allowed !important; }`;
+        (document.head || document.body).append(guardStyle);
+        render();
+        if (locked) observe();
+    }
+    function setCompact(compact) {
+        if (!root) return;
+        root.classList.toggle('compact', compact);
+        toggle.textContent = compact ? '+' : '−';
+        toggle.setAttribute('aria-label', compact ? 'Show status details' : 'Minimize status');
+        toggle.setAttribute('aria-expanded', String(!compact));
+    }
+    function render() {
+        if (!root) return;
+        root.className = 'card ' + model.kind;
+        title.textContent = model.title;
+        detail.textContent = model.detail;
+        setCompact(false);
+        clearTimeout(compactTimer);
+        if (model.kind !== 'busy') compactTimer = setTimeout(() => setCompact(true), 6000);
+    }
+    function markControls() {
+        if (!locked) return;
+        // Discard detached React nodes instead of retaining every visited song row.
+        for (const [element, attributes] of saved) {
+            if (!element.isConnected) { restore(element, attributes); saved.delete(element); }
+        }
+        for (const element of document.querySelectorAll(targets)) {
+            if (saved.has(element) || element.parentElement?.closest(targets)) continue;
+            const attributes = {};
+            for (const name of [marker, 'aria-disabled', 'aria-description', 'title']) {
+                attributes[name] = element.getAttribute(name);
+            }
+            saved.set(element, attributes);
+            element.setAttribute(marker, 'true');
+            element.setAttribute('aria-disabled', 'true');
+            element.setAttribute('aria-description', reason);
+            element.setAttribute('title', reason);
+        }
+    }
+    function restore(element, attributes) {
+        for (const [name, value] of Object.entries(attributes)) {
+            const ours = name === marker || name === 'aria-disabled' ? 'true' : reason;
+            // Preserve any newer value written by Spotify while the operation ran.
+            if (element.getAttribute(name) !== ours) continue;
+            if (value === null) element.removeAttribute(name);
+            else element.setAttribute(name, value);
+        }
+    }
+    function observe() {
+        if (observer || !document.body) return;
+        markControls();
+        observer = new MutationObserver(markControls);
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+    function unlock() {
+        locked = false;
+        observer?.disconnect();
+        observer = null;
+        for (const [element, attributes] of saved) restore(element, attributes);
+        saved.clear();
+        if (tooltip) tooltip.hidden = true;
+    }
+    function targetFor(event) {
+        const element = event.target instanceof Element ? event.target : null;
+        return element?.closest(targets);
+    }
+    function showTooltip(element) {
+        if (!tooltip || !element) return;
+        const rect = element.getBoundingClientRect();
+        tooltip.hidden = false;
+        tooltip.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - tooltip.offsetWidth - 8)) + 'px';
+        tooltip.style.top = Math.max(8, Math.min(rect.top - tooltip.offsetHeight - 8, window.innerHeight - tooltip.offsetHeight - 8)) + 'px';
+    }
+    function guard(event) {
+        if (!locked || event.composedPath().includes(host)) return;
+        const target = targetFor(event);
+        const element = event.target instanceof Element ? event.target : null;
+        const editing = element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]');
+        const keyboard = event.type === 'keydown' || event.type === 'keyup';
+        const shortcut = keyboard && !editing && (
+            [' ', 'Spacebar', 'MediaTrackNext', 'MediaTrackPrevious', 'MediaPlayPause', 'MediaPlay', 'MediaPause'].includes(event.key) ||
+            ((event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) && ['ArrowLeft', 'ArrowRight'].includes(event.key))
+        );
+        // Keep tabbing, browsing, search and volume usable during the search.
+        const seekKey = target?.matches('[data-testid="playback-progressbar"]') && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key);
+        if (!(shortcut || (target && (!keyboard || seekKey || ['Enter', ' ', 'Spacebar'].includes(event.key))))) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showTooltip(target);
+    }
+    for (const type of ['click', 'dblclick', 'auxclick', 'contextmenu', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'keydown', 'keyup']) {
+        window.addEventListener(type, guard, { capture: true, passive: false });
+    }
+    for (const type of ['pointerover', 'focusin']) {
+        window.addEventListener(type, event => { if (locked) showTooltip(targetFor(event)); }, true);
+    }
+    for (const type of ['pointerout', 'focusout', 'scroll']) {
+        window.addEventListener(type, () => { if (tooltip) tooltip.hidden = true; }, true);
+    }
+    if (document.body) mount();
+    else document.addEventListener('DOMContentLoaded', mount, { once: true });
+    window.addEventListener('pagehide', unlock);
+    return {
+        begin() {
+            generation++;
+            clearTimeout(releaseTimer);
+            locked = true;
+            model = { kind: 'busy', title: 'Finding an ad-free stream…', detail: 'Playback controls are temporarily paused while the script updates Spotify.' };
+            mount();
+            render();
+            observe();
+        },
+        finish(warning) {
+            const completedGeneration = generation;
+            // Let the intercepted response reach Spotify before accepting another click.
+            releaseTimer = setTimeout(() => {
+                if (completedGeneration !== generation) return;
+                unlock();
+                model = warning
+                    ? { kind: 'warning', title: 'Ad handling paused', detail: warning }
+                    : { kind: 'ready', title: 'Ad handling complete', detail: 'Playback controls are available again.' };
+                render();
+            }, 250);
+        },
+        warning(message) {
+            if (locked) return;
+            model = { kind: 'warning', title: 'Spotify needs a moment', detail: message };
+            render();
+        }
+    };
+}
 //
 // Hook the fetch() function.
 //
@@ -210,7 +433,7 @@ window.fetch = function(url, init)
         var request = JSON.parse(init.body);
         if (request["state_ref"]["state_id"].includes("future_"))
         {
-            console.log("SpotiAds: Changing Spotify's states request to reflect future state machine");
+            console.log("[Spotify Ad Script] Changing Spotify's states request to reflect future state machine");
             var stateMachineId = request["state_ref"]["state_id"].split("+")[1];
             var stateId = request["state_ref"]["state_id"].split("+")[2];
             request["state_ref"]["state_id"] = stateId;
@@ -246,11 +469,11 @@ window.fetch = function(url, init)
         var request = JSON.parse(init.body);
         if (request["command"] != null)
         {
-            console.log("SpotiAds: We see connect-state with endpoint: " + request["command"]["endpoint"]);
+            console.log("[Spotify Ad Script] We see connect-state with endpoint: " + request["command"]["endpoint"]);
         }
         else if (request["member_type"] != null)
         {
-            console.log("SpotiAds: We see connect-state with member_type: " + request["member_type"]);
+            console.log("[Spotify Ad Script] We see connect-state with member_type: " + request["member_type"]);
         }
         return originalFetch.call(window, fetchArguments.url, fetchArguments.init);
         }
@@ -275,11 +498,11 @@ window.fetch = function(url, init)
 async function onAccessTokenResponseIntercepted(accessTokenResponse)
 {
     var resultJson = await accessTokenResponse.json();
-    console.log("SpotiAds: access token received.");
+    console.log("[Spotify Ad Script] access token received.");
     if (accessTokenResponse.status != 200)
     {
-        console.error("SpotiAds: Could not refresh access token. error:");
-        console.error(resultJson);
+        console.error("[Spotify Ad Script] Could not refresh access token. error:");
+        console.error('[Spotify Ad Script]', resultJson);
         throw "Can't refresh access token";
     }
     accessToken = resultJson["accessToken"];
@@ -293,7 +516,7 @@ wsHook.after = function(messageEvent, url)
     try
     {
         var data = JSON.parse(messageEvent.data);
-        //console.log("SpotiAds: we see websocket payload: " + data.toString());
+        //console.log("[Spotify Ad Script] we see websocket payload: " + data.toString());
         if (data.payloads == undefined) {return messageEvent;}
         for (var i = 0; i < data.payloads.length; i++)
         {
@@ -308,7 +531,7 @@ wsHook.after = function(messageEvent, url)
                 if (stateRef != null)
                 {
                     var currentStateIndex = stateRef["state_index"];
-                    //console.log("SpotiAds: Received state machine over WebSocket, manipulating it");
+                    //console.log("[Spotify Ad Script] Received state machine over WebSocket, manipulating it");
                     // TODO: it's possible that payload["prev_state_ref"] will be different that the current state machine, states will be rejected,
                     //       which will cause Spotify to request /state_conflict. see _rejectState(). Is it our fault?
                     payload["state_machine"] = await manipulateStateMachine(stateMachine, currentStateIndex, true, "web_socket_replace_state");
@@ -334,7 +557,7 @@ wsHook.after = function(messageEvent, url)
                     }
                     if (payload.cluster.player_state.track.provider == "ads/inject_tracks")
                     {
-                        console.log("SpotiAds: Spotify tring to inject ads? advertiser: " + payload.cluster.player_state.track.metadata.advertiser);
+                        console.log("[Spotify Ad Script] Spotify trying to inject ads? advertiser: " + payload.cluster.player_state.track.metadata.advertiser);
                         //payload.cluster.player_state.restrictions = {};
                         payload.cluster.player_state.track = null;
                         data.payloads[i] = payload;
@@ -348,7 +571,7 @@ wsHook.after = function(messageEvent, url)
     }
     catch(exception)
     {
-        console.log(exception);
+        console.log('[Spotify Ad Script]', exception);
         return messageEvent;
     }
     };
@@ -379,7 +602,7 @@ function onStatesFetchResponseReceived(url, init, responseBody)
                 // {
                 //     // HACKKKKKKKKKKKKK
                 //     debugger;
-                //     console.log("SpotiAds: Dropping modify_current_state states update response to prevent races between state machine updating.");
+                //     console.log("[Spotify Ad Script] Dropping modify_current_state states update response to prevent races between state machine updating.");
                 //     //data["state_machine"]["state_machine_id"] = "hrepsh";
                 //     return data;
                 // }
@@ -396,7 +619,7 @@ function onStatesFetchResponseReceived(url, init, responseBody)
                     rejectedStatesString += rejectedStates[i]["state_machine_id"] + " ";
                 }
                 var stateRef = request["state_ref"];
-                console.log("SpotiAds: We see /state_conflict. rejected_state_refs: " + rejectedStatesString + ", current state_machine_id: " + stateRef["state_machine_id"]);
+                console.log("[Spotify Ad Script] We see /state_conflict. rejected_state_refs: " + rejectedStatesString + ", current state_machine_id: " + stateRef["state_machine_id"]);
                 for (var key of Object.keys(commands))
                 {
                     var stateMachine = data["commands"][key]["state_machine"];
@@ -414,7 +637,7 @@ function onStatesFetchResponseReceived(url, init, responseBody)
             return data;
         }).catch(function(reason)
         {
-            console.error(reason);
+            console.error('[Spotify Ad Script]', reason);
             return originalJsonPromise;
         });
         };
@@ -424,15 +647,52 @@ function onStatesFetchResponseReceived(url, init, responseBody)
 }
 async function manipulateStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source="")
 {
-    var didRequestFutureStates = false;
+    // Ordinary playback updates should never flash the UI or disable controls.
+    if (!stateMachine?.tracks?.some(track => isAdTrack(track))) {
+        currentTracks = stateMachine?.tracks || [];
+        return stateMachine;
+    }
+    const operation = { controller: new AbortController(), requestedStates: false, fallback: false };
+    const previousTamperedStates = { ...tamperedStatesMap };
+    const previousTracks = currentTracks;
+    const timer = setTimeout(() => operation.controller.abort(), 15000);
+    let warning = '';
+    playbackUI.begin();
+    try {
+        // A timeout or malformed response must not expose a half-modified state machine.
+        const result = await manipulateAdStateMachine(structuredClone(stateMachine), startingStateIndex, isReplacingState, debug_source, operation);
+        if (operation.requestedStates) {
+            console.log('[Spotify Ad Script] Putting the state machine back to the original state');
+            await getStates(stateMachine.state_machine_id, stateMachine.states[startingStateIndex].state_id, 0, operation);
+        }
+        operation.controller.signal.throwIfAborted();
+        if (operation.fallback) warning = 'An ad-free stream could not be confirmed. Controls are available again; Spotify may still play an ad.';
+        return result;
+    } catch (error) {
+        tamperedStatesMap = previousTamperedStates;
+        currentTracks = previousTracks;
+        warning = operation.controller.signal.aborted
+            ? 'The search timed out and was stopped. Controls are available again. If playback stalls, reload Spotify.'
+            : 'The playback update could not finish. Controls are available again. If playback stalls, reload Spotify.';
+        console.warn('[Spotify Ad Script] Ad handling stopped:', error);
+        return stateMachine;
+    } finally {
+        clearTimeout(timer);
+        playbackUI.finish(warning);
+    }
+}
+async function manipulateAdStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source, operation)
+{
+    var passes = 0;
     do
     {
+        operation.controller.signal.throwIfAborted();
+        if (++passes > 20) throw new Error('Ad-state search exceeded its pass limit');
         var removedAds = false;
-        var originalStateMachineId = stateMachine["state_machine_id"];
-        var originalStateId = stateMachine["states"][startingStateIndex]["state_id"];
-        console.log("SpotiAds: We see state machine: " + getStateMachineDestripction(stateMachine) + " (state machine id: " + stateMachine["state_machine_id"] + ", source:" + debug_source + ")");
+        console.log("[Spotify Ad Script] We see state machine: " + getStateMachineDestripction(stateMachine) + " (state machine id: " + stateMachine["state_machine_id"] + ", source:" + debug_source + ")");
         for (var i = 0; i < stateMachine["states"].length; i++)
         {
+            if (i >= 1000) throw new Error('Ad-state search exceeded its state limit');
             var state = stateMachine["states"][i];
             var stateId = stateMachine["states"][i]["state_id"];
             var currentStateIdNormalized = getFutureStateId(stateId);
@@ -444,24 +704,24 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
             var newState = structuredClone(state);
             if (isAd(state, stateMachine))
             {
-                console.log("SpotifyAdRemover: Encountered ad in " + trackURI);
+                console.log("[Spotify Ad Script] Encountered ad in " + trackURI);
                 newState = getNextAdFreeState(stateMachine, stateId, i);
                 if (isAd(newState, stateMachine))
                 {
                     // We can't really skip over this state because we don't know where to skip to.
                     // We will request even more states, or, if this fails, at least shorten the ad.
-                    console.log("SpotiAds: Requesting future state machine.");
+                    console.log("[Spotify Ad Script] Requesting future state machine.");
                     try
                     {
-                        var [nextNextState, futureStateMachine] = await getNextAdFreeStateFromFutureStateMachine(stateMachine, newState);
+                        var [nextNextState, futureStateMachine] = await getNextAdFreeStateFromFutureStateMachine(stateMachine, newState, operation);
                         if (nextNextState != null)
                         {
                             newState = nextNextState;
                             var originalNextStateId = newState["state_id"];
                             var nextTrackName = futureStateMachine["tracks"][newState["track"]]["metadata"]["name"];
-                            console.log("SpotiAds: after the ad we have track '" + nextTrackName + "'.");
+                            console.log("[Spotify Ad Script] after the ad we have track '" + nextTrackName + "'.");
                             // Fix the new state to be suitable for replacing in the currenet state machine.
-                            console.log("Spotiads: Inserting new state from future state machine");
+                            console.log("[Spotify Ad Script] Inserting new state from future state machine");
                             var wantedStateId = state["state_id"];
                             var [fixedState, fixedStateMachine] = fixStateForOldStateMachine(newState, futureStateMachine, wantedStateId, stateMachine);
                             newState = fixedState;
@@ -471,40 +731,43 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
                                 // Our new state is going to be played now, let's point the player at the future state machine.
                                 newState["state_id"] = originalNextStateId;
                                 stateMachine["state_machine_id"] = futureStateMachine["state_machine_id"];
-                                console.log("SpotifyAdRemover: Removed ad at " + trackURI + ", more complex flow");
+                                console.log("[Spotify Ad Script] Removed ad at " + trackURI + ", more complex flow");
                             }
                         }
                         else
                         {
+                            operation.fallback = true;
                             state = shortenedState(state, track);
-                            console.log("SpotifyAdRemover: Shortned ad");
+                            console.log("[Spotify Ad Script] Shortened ad");
                         }
                     }
                     catch (exception)
                     {
+                        operation.controller.signal.throwIfAborted();
+                        operation.fallback = true;
                         state = shortenedState(state, track);
-                        console.log("SpotifyAdRemover: Shortned ad at " + trackURI + " due to exception:");
-                        console.error(exception);
-                        console.error(exception.stack);
+                        console.log("[Spotify Ad Script] Shortened ad at " + trackURI + " due to exception:");
+                        console.error('[Spotify Ad Script]', exception);
+                        console.error('[Spotify Ad Script]', exception.stack);
                     }
-                    didRequestFutureStates = true;
                 }
                 else
                 {
-                    console.log("SpotiAds: after the ad we have track '" + nextTrackName + "'. (easy flow)");
+                    console.log("[Spotify Ad Script] after the ad we have track '" + nextTrackName + "'. (easy flow)");
                 }
                 // We don't want tracks with no transitions
                 // We'll request more states to discover the better state with the transitions
-                if ((newState["transitions"]["advance"] == null && newState["disallow_seeking"] == true) && !isAd(newState, futureStateMachine))
+                if ((newState["transitions"]["advance"] == null && newState["disallow_seeking"] == true) && !isAd(newState, stateMachine))
                 {
                     var track = stateMachine["tracks"][newState["track"]];
                     var trackName = track["metadata"]["name"];
-                    console.log("SpotiAds: Encountered a track '" + trackName + "' that disallows seeking. Requesting more states");
-                    [futureStateMachine, stateRef] = await getStates(stateMachine["state_machine_id"], newState["state_id"]);
+                    console.log("[Spotify Ad Script] Encountered a track '" + trackName + "' that disallows seeking. Requesting more states");
+                    [futureStateMachine, stateRef] = await getStates(stateMachine["state_machine_id"], newState["state_id"], 3, operation);
                     if (futureStateMachine != null)
                     {
                         newState = futureStateMachine["states"][stateRef["state_index"]];
-                        console.log("Spotiads: Inserting fixed track with transitions from future state machine");
+                        originalNextStateId = newState["state_id"];
+                        console.log("[Spotify Ad Script] Inserting fixed track with transitions from future state machine");
                         var wantedStateId = state["state_id"];
                         var [fixedState, fixedStateMachine] = fixStateForOldStateMachine(newState, futureStateMachine, wantedStateId, stateMachine);
                         newState = fixedState;
@@ -512,18 +775,17 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
                     }
                     else
                     {
-                        console.log("SpotiAds: Can't get more states, hacking the next state");
+                        console.log("[Spotify Ad Script] Can't get more states, hacking the next state");
                         newState["disallow_seeking"] = false;
                         newState["restrictions"] = {};
                     }
-                    if (i == startingStateIndex && !isReplacingState)
+                    if (futureStateMachine != null && i == startingStateIndex && !isReplacingState)
                     {
                         // Our new state is going to be played now, let's point the player at the future state machine.
                         newState["state_id"] = originalNextStateId;
                         stateMachine["state_machine_id"] = futureStateMachine["state_machine_id"];
-                        console.log("SpotifyAdRemover: Removed ad at " + trackURI + ", more complex flow (2)");
+                        console.log("[Spotify Ad Script] Removed ad at " + trackURI + ", more complex flow (2)");
                     }
-                    didRequestFutureStates = true;
                 }
                 currentStateIdNormalized = getFutureStateId(newState["state_id"]);
                 if (newState != null && state["state_id"] != newState["state_id"])
@@ -542,22 +804,16 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
             {
                 // Our new ad-free state is going to be played now.
                 var removedAdUri = tamperedStatesMap[currentStateIdNormalized];
-                console.log("SpotifyAdRemover: Removed ad at " + removedAdUri);
+                console.log("[Spotify Ad Script] Removed ad at " + removedAdUri);
             }
         }
     }
     while (removedAds);
     stateMachine = tryToRemoveAdTracks(stateMachine);
     currentTracks = stateMachine["tracks"];
-    if (didRequestFutureStates)
-    {
-        // make the original states request again to update the state to the original
-        console.log("SpotiAds: Putting the state machine back to the original state");
-        getStates(originalStateMachineId, originalStateId);
-    }
     return stateMachine;
 }
-async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState)
+async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState, operation)
 {
     try
     {
@@ -573,7 +829,7 @@ async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState)
                 stateMachineId = nextState["state_id"].split("+")[1];
                 stateId = nextState["state_id"].split("+")[2];
             }
-            [futureStateMachine, stateRef] = await getStates(stateMachineId, stateId);
+            [futureStateMachine, stateRef] = await getStates(stateMachineId, stateId, 3, operation);
             nextState = getNextAdFreeState(futureStateMachine, stateId);
             j++;
         }
@@ -581,15 +837,16 @@ async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState)
         if (isAd(nextState, futureStateMachine))
         {
             // print out debugging information
-            console.error("could not find the next ad-free state. state machine was:");
-            console.error(futureStateMachine);
+            console.error('[Spotify Ad Script]', "could not find the next ad-free state. state machine was:");
+            console.error('[Spotify Ad Script]', futureStateMachine);
             return [null, futureStateMachine];
         }
     }
     catch (exception)
     {
-        console.error(exception);
-        console.error(exception.stack);
+        operation.controller.signal.throwIfAborted();
+        console.error('[Spotify Ad Script]', exception);
+        console.error('[Spotify Ad Script]', exception.stack);
         return [null, futureStateMachine];
     }
     return [nextState, futureStateMachine];
@@ -637,11 +894,13 @@ function shortenedState(state, track)
     state["position_offset"] = trackDuration;
     return state;
 }
-async function getStates(stateMachineId, startingStateId, maxRetries = 3)
+async function getStates(stateMachineId, startingStateId, maxRetries = 3, operation)
 {
+    operation.controller.signal.throwIfAborted();
+    operation.requestedStates = true;
     if (startingStateId.includes("future_"))
     {
-        console.log("SpotiAds: getStates: changing request to reflect future state machine");
+        console.log("[Spotify Ad Script] getStates: changing request to reflect future state machine");
         stateMachineId = startingStateId.split("+")[1];
         startingStateId = startingStateId.split("+")[2];
     }
@@ -653,7 +912,8 @@ async function getStates(stateMachineId, startingStateId, maxRetries = 3)
     var clientTokenToPut = clientToken ? clientToken : "";
     var result = await originalFetch.call(window, statesUrl,{method: 'PUT', headers: {
         'Authorization': authorizationHeaderToPut, 'client-token': clientTokenToPut,  'Content-Type': 'application/json'},
-         body: JSON.stringify(body)});
+         body: JSON.stringify(body), signal: operation.controller.signal});
+    operation.controller.signal.throwIfAborted();
     if (result.status != 200)
     {
         if (result.status == 204)
@@ -664,7 +924,7 @@ async function getStates(stateMachineId, startingStateId, maxRetries = 3)
         // var resultJson = await result.json();
         // var looksExpired = (resultJson["error"] && resultJson["error"]["message"] == "The access token expired")
         onStateMachineError(result.status);
-        throw Error("SpotiAds: Failed to get states, http status code " + result.status);
+        throw Error("[Spotify Ad Script] Failed to get states, http status code " + result.status);
         // // Refresh the access token and try again.
         // await refreshAccessToken();
         // result = await originalFetch.call(window, statesUrl,{method: 'PUT', headers: {'Authorization': "Bearer " + accessToken, 'Content-Type': 'application/json'},
@@ -674,12 +934,13 @@ async function getStates(stateMachineId, startingStateId, maxRetries = 3)
     // This will return a null stateMachine, and just shorten the ad instead of removing it.
     // Retry for now
     var resultJson = await result.json();
+    operation.controller.signal.throwIfAborted();
     var stateMachine = resultJson["state_machine"];
     var stateRef = resultJson["updated_state_ref"];
     if (!stateMachine)
     {
         if (maxRetries > 0)
-            return getStates(stateMachineId, startingStateId, --maxRetries)
+            return getStates(stateMachineId, startingStateId, --maxRetries, operation)
     }
     return [stateMachine, stateRef];
 }
@@ -687,8 +948,11 @@ function* statesGenerator(states, startingStateIndex = 2, nextStateName = "skip_
 {
     var currentState = states[startingStateIndex];
     var iterationCount = 0;
+    const visited = new Set();
     for (var state = currentState; state != undefined; state = states[state["transitions"][nextStateName]["state_index"]])
     {
+        if (visited.has(state)) throw new Error('Cyclic playback state machine');
+        visited.add(state);
         iterationCount++;
         yield state;
         var nextTransition = state["transitions"][nextStateName];
@@ -719,7 +983,7 @@ function getNextAdFreeState(stateMachine, stateId, startingStateIndex = 2, exclu
         }
         if (previousState == state)
         {
-            console.error("Cyclic state machine detected.");
+            console.error('[Spotify Ad Script]', "Cyclic state machine detected.");
             return state;
         }
         //foundTrack = (track["metadata"]["uri"] == sourceTrack["metadata"]["uri"]);
@@ -771,11 +1035,14 @@ function getPreviousState(stateMachine, sourceTrack, startingStateIndex = 2)
 function tryToRemoveAdTracks(stateMachine)
 {
     var tracks = stateMachine["tracks"];
+    // Keep shortened fallback ads valid: deleting a track still used by a state
+    // would hand Spotify an unplayable response after the controls unlock.
+    const referencedTracks = new Set(stateMachine["states"].map(state => state["track"]));
     for (var i = 0; i < tracks.length; i++)
     {
-        if (isAdTrack(tracks[i]))
+        if (isAdTrack(tracks[i]) && !referencedTracks.has(i))
         {
-            //console.log("SpotiAds: trying to remove ad track " + tracks[i]["metadata"]["uri"]);
+            //console.log("[Spotify Ad Script] trying to remove ad track " + tracks[i]["metadata"]["uri"]);
             //debugger;
             tracks[i] = null;
         }
@@ -791,7 +1058,7 @@ function isAd(state, stateMachine)
     var track = tracks[trackID];
     if (state["state_id"].includes("filler"))
     {
-        //console.log("SpotiAds: Encountered filler state, assuming not an ad");
+        //console.log("[Spotify Ad Script] Encountered filler state, assuming not an ad");
         return false;
     }
     return isAdTrack(track);
@@ -803,11 +1070,12 @@ function isAdTrack(track)
     return trackURI.includes(":ad:");
 }
 function onStateMachineError(code) {
-    console.warn('[Spotify scriptlet] State request failed:', code);
+    console.warn('[Spotify Ad Script] State request failed:', code);
 }
 function onTooManyRequestsError() {
-    console.warn('[Spotify scriptlet] Spotify returned HTTP 429; pause playback and retry later.');
+    console.warn('[Spotify Ad Script] Spotify returned HTTP 429; pause playback and retry later.');
+    playbackUI.warning('Spotify is limiting requests. Pause playback and try again later.');
 }
     window[installed] = true;
-    console.info('[Spotify scriptlet] Loaded. This confirms injection only, not ad removal.');
+    console.info('[Spotify Ad Script] Loaded. This confirms injection only, not ad removal.');
 })();
