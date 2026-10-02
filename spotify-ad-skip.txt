@@ -211,7 +211,7 @@ var accessToken = "";
 var clientToken = "";
 var authorizationHeader = "";
 var statesManipuationQueue = new PromiseQueue();
-let rateLimitedUntil = 0;
+let nextRateLimitWarningAt = 0;
 let activeAdOperation = null;
 let playbackRevision = 0;
 function cancelAdSearchForPlaybackChange() {
@@ -459,12 +459,7 @@ function createPlaybackUI() {
                 render();
             }, 250);
         },
-        warning(message, releaseControls = false) {
-            if (releaseControls) {
-                generation++;
-                clearTimeout(releaseTimer);
-                unlock();
-            }
+        warning(message) {
             if (locked) return;
             model = { kind: 'warning', title: 'Spotify needs a moment', detail: message };
             render();
@@ -501,7 +496,7 @@ window.fetch = function(url, init)
         return originalFetch.call(window, fetchArguments.url, fetchArguments.init).then(function(response)
         {
             if (response.status === 429) {
-                onTooManyRequestsError(response);
+                onTooManyRequestsError();
                 return response;
             }
             var modifiedResponse = onStatesFetchResponseReceived(url, init, response, responseRevision);
@@ -540,7 +535,7 @@ window.fetch = function(url, init)
             console.log("[Spotify Ad Script] We see connect-state with member_type: " + request["member_type"]);
         }
         return originalFetch.call(window, fetchArguments.url, fetchArguments.init).then(function(response) {
-            if (response.status === 429) onTooManyRequestsError(response);
+            if (response.status === 429) onTooManyRequestsError();
             return response;
         });
         }
@@ -553,7 +548,7 @@ window.fetch = function(url, init)
         {
             if (response.status == 429)
             {
-                onTooManyRequestsError(response);
+                onTooManyRequestsError();
             }
             return response;
         });
@@ -624,7 +619,7 @@ wsHook.after = function(messageEvent, url)
                         // instead of having false positives
                         // showMultiDeviceWarning();
                     }
-                    if (Date.now() >= rateLimitedUntil && payload.cluster.player_state.track.provider == "ads/inject_tracks")
+                    if (payload.cluster.player_state.track.provider == "ads/inject_tracks")
                     {
                         console.log("[Spotify Ad Script] Spotify trying to inject ads? advertiser: " + payload.cluster.player_state.track.metadata.advertiser);
                         //payload.cluster.player_state.restrictions = {};
@@ -718,16 +713,11 @@ function onStatesFetchResponseReceived(url, init, responseBody, responseRevision
 }
 async function manipulateStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source="", paused = false)
 {
-    // Hand Spotify its original playback states during a rate-limit cooldown.
-    // Do not restart the popup, lock controls, or launch more ad searches.
-    if (Date.now() < rateLimitedUntil) {
-        currentTracks = stateMachine?.tracks || [];
-        return stateMachine;
-    }
-    // Looking ahead sends synthetic resume requests. Never do this while music
-    // is current or playback is paused merely because a later state contains an ad.
-    const currentState = stateMachine?.states?.[startingStateIndex];
-    if (paused || debug_source === 'pause' || !currentState || !isAd(currentState, stateMachine)) {
+    // Spotify can deliver an ad's states while music is still current, then
+    // advance into that ad without another intercepted response. Prepare every
+    // ad state in the delivered machine instead of waiting for it to be current.
+    // Explicitly paused playback must still avoid synthetic resume requests.
+    if (paused || debug_source === 'pause' || !stateMachine?.tracks?.some(track => isAdTrack(track))) {
         currentTracks = stateMachine?.tracks || [];
         return stateMachine;
     }
@@ -741,7 +731,7 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
     try {
         // A timeout or malformed response must not expose a half-modified state machine.
         const result = await manipulateAdStateMachine(structuredClone(stateMachine), startingStateIndex, isReplacingState, debug_source, operation);
-        if (operation.requestedStates) {
+        if (operation.requestedStates && !operation.stateRequestFailed) {
             console.log('[Spotify Ad Script] Putting the state machine back to the original state');
             await getStates(stateMachine.state_machine_id, stateMachine.states[startingStateIndex].state_id, 0, operation);
         }
@@ -751,8 +741,6 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
     } catch (error) {
         tamperedStatesMap = previousTamperedStates;
         currentTracks = previousTracks;
-        // The 429 handler already displayed the cooldown warning and unlocked UI.
-        if (operation.rateLimited) return stateMachine;
         if (operation.cancelledByPlayback) {
             warning = 'Playback changed. The ad search was stopped and controls are available again.';
             console.info('[Spotify Ad Script] Ad search cancelled after a playback change.');
@@ -766,7 +754,7 @@ async function manipulateStateMachine(stateMachine, startingStateIndex, isReplac
     } finally {
         clearTimeout(timer);
         if (activeAdOperation === operation) activeAdOperation = null;
-        if (!operation.rateLimited) playbackUI.finish(warning);
+        playbackUI.finish(warning);
     }
 }
 async function manipulateAdStateMachine(stateMachine, startingStateIndex, isReplacingState, debug_source, operation)
@@ -792,9 +780,6 @@ async function manipulateAdStateMachine(stateMachine, startingStateIndex, isRepl
             var newState = structuredClone(state);
             if (isAd(state, stateMachine))
             {
-                // Process only the active ad. Other ad slots can describe the same
-                // break; probing each of them can advance playback multiple times.
-                if (i !== startingStateIndex) continue;
                 console.log("[Spotify Ad Script] Encountered ad in " + trackURI);
                 newState = getNextAdFreeState(stateMachine, stateId, i);
                 if (isAd(newState, stateMachine))
@@ -906,6 +891,9 @@ async function manipulateAdStateMachine(stateMachine, startingStateIndex, isRepl
 }
 async function getNextAdFreeStateFromFutureStateMachine(stateMachine, nextState, operation)
 {
+    // A rejected lookup uses the shortening fallback for this operation. This
+    // does not disable local replacements or ad handling on subsequent updates.
+    if (operation.stateRequestFailed) return [null, null];
     try
     {
         var maxAttempts = 5;
@@ -988,11 +976,7 @@ function shortenedState(state, track)
 async function getStates(stateMachineId, startingStateId, maxRetries = 3, operation)
 {
     operation.controller.signal.throwIfAborted();
-    if (Date.now() < rateLimitedUntil) {
-        operation.rateLimited = true;
-        operation.controller.abort();
-        operation.controller.signal.throwIfAborted();
-    }
+    if (operation.stateRequestFailed) return [null, null];
     operation.requestedStates = true;
     if (startingStateId.includes("future_"))
     {
@@ -1009,7 +993,10 @@ async function getStates(stateMachineId, startingStateId, maxRetries = 3, operat
     var result = await originalFetch.call(window, statesUrl,{method: 'PUT', headers: {
         'Authorization': authorizationHeaderToPut, 'client-token': clientTokenToPut,  'Content-Type': 'application/json'},
          body: JSON.stringify(body), signal: operation.controller.signal});
-    if (result.status === 429) onTooManyRequestsError(result);
+    if (result.status === 429) {
+        operation.stateRequestFailed = true;
+        onTooManyRequestsError();
+    }
     operation.controller.signal.throwIfAborted();
     if (result.status != 200)
     {
@@ -1169,27 +1156,13 @@ function isAdTrack(track)
 function onStateMachineError(code) {
     console.warn('[Spotify Ad Script] State request failed:', code);
 }
-function onTooManyRequestsError(response) {
+function onTooManyRequestsError() {
     const now = Date.now();
-    const wasCoolingDown = now < rateLimitedUntil;
-    const retryAfter = response?.headers?.get('Retry-After')?.trim();
-    let delay = 60000;
-    if (retryAfter) {
-        const requestedDelay = /^\d+$/.test(retryAfter)
-            ? Number(retryAfter) * 1000
-            : Date.parse(retryAfter) - now;
-        if (Number.isFinite(requestedDelay)) delay = Math.max(delay, requestedDelay);
-    }
-    // Later 429s can extend the pause, but must not restart the fading popup.
-    rateLimitedUntil = Math.max(rateLimitedUntil, now + delay);
-    if (activeAdOperation) {
-        activeAdOperation.rateLimited = true;
-        activeAdOperation.controller.abort();
-    }
-    if (wasCoolingDown) return;
-    const seconds = Math.ceil((rateLimitedUntil - now) / 1000);
-    console.warn('[Spotify Ad Script] Spotify returned HTTP 429; ad handling is paused for at least ' + seconds + ' seconds. Pause playback and try again later.');
-    playbackUI.warning('Spotify is limiting playback requests. Ad handling is paused. Pause playback and wait at least ' + seconds + ' seconds before trying again. Controls are available.', true);
+    // Limit repeated notices only. Never put ad handling into a timed cooldown.
+    if (now < nextRateLimitWarningAt) return;
+    nextRateLimitWarningAt = now + 60000;
+    console.warn('[Spotify Ad Script] Spotify returned HTTP 429. Ad handling remains enabled; Spotify may be unable to load audio.');
+    playbackUI.warning('Spotify is limiting playback requests. Ad handling remains enabled, but Spotify may be unable to load audio.');
 }
     window[installed] = true;
     console.info('[Spotify Ad Script] Loaded. This confirms injection only, not ad removal.');
