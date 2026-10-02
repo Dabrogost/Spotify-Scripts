@@ -243,7 +243,8 @@ function createPlaybackUI() {
     let detail;
     let tooltip;
     let toggle;
-    let compactTimer;
+    let fadeTimer;
+    let hideTimer;
     let releaseTimer;
     let generation = 0;
     let model = { kind: 'ready', title: 'Spotify Ad Skip is ready', detail: 'Loaded in this tab. Waiting for ads.' };
@@ -251,7 +252,7 @@ function createPlaybackUI() {
         if (host || !document.body) return;
         host = document.createElement('div');
         host.id = 'spotify-ad-skip-ui';
-        host.style.cssText = 'all:initial;position:fixed;right:16px;bottom:104px;z-index:2147483647;';
+        host.style.cssText = 'all:initial;position:fixed;right:16px;bottom:104px;z-index:2147483647;pointer-events:none;';
         const shadow = host.attachShadow({ mode: 'closed' });
         const style = document.createElement('style');
         style.textContent = `
@@ -259,7 +260,9 @@ function createPlaybackUI() {
             * { box-sizing: border-box; }
             .card { width: min(340px, calc(100vw - 32px)); padding: 16px; border: 1px solid #414141;
                 border-radius: 12px; background: #181818; color: #fff; box-shadow: 0 8px 28px #0008;
-                font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+                font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+                opacity: 1; transition: opacity 250ms ease; pointer-events: auto; }
+            .card.fading { opacity: 0; pointer-events: none; }
             .heading { display: flex; align-items: center; gap: 10px; }
             .dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: #1ed760; }
             .busy .dot { background: transparent; border: 2px solid #535353; border-top-color: #1ed760;
@@ -278,7 +281,7 @@ function createPlaybackUI() {
                 font: 12px/1.4 system-ui, sans-serif; pointer-events: none; }
             [hidden] { display: none !important; }
             @keyframes spin { to { transform: rotate(360deg); } }
-            @media (prefers-reduced-motion: reduce) { .busy .dot { animation: none; } }
+            @media (prefers-reduced-motion: reduce) { .busy .dot { animation: none; } .card { transition: none; } }
         `;
         root = document.createElement('section');
         root.className = 'card';
@@ -327,12 +330,21 @@ function createPlaybackUI() {
     }
     function render() {
         if (!root) return;
+        clearTimeout(fadeTimer);
+        clearTimeout(hideTimer);
+        root.hidden = false;
+        root.inert = false;
         root.className = 'card ' + model.kind;
         title.textContent = model.title;
         detail.textContent = model.detail;
         setCompact(false);
-        clearTimeout(compactTimer);
-        if (model.kind !== 'busy') compactTimer = setTimeout(() => setCompact(true), 6000);
+        if (model.kind !== 'busy') {
+            fadeTimer = setTimeout(() => {
+                root.classList.add('fading');
+                root.inert = true;
+                hideTimer = setTimeout(() => { root.hidden = true; }, 250);
+            }, model.kind === 'warning' ? 6000 : 3000);
+        }
     }
     function markControls() {
         if (!locked) return;
