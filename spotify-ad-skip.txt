@@ -251,7 +251,6 @@ function createPlaybackUI() {
     let title;
     let detail;
     let tooltip;
-    let toggle;
     let fadeTimer;
     let hideTimer;
     let releaseTimer;
@@ -267,41 +266,33 @@ function createPlaybackUI() {
         style.textContent = `
             :host { color-scheme: dark; }
             * { box-sizing: border-box; }
-            .card { width: min(340px, calc(100vw - 32px)); padding: 16px; border: 1px solid #414141;
-                border-radius: 12px; background: #181818; color: #fff; box-shadow: 0 8px 28px #0008;
-                font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+            .card { width: max-content; max-width: calc(100vw - 32px); padding: 10px 18px;
+                border: 1px solid #1ed76055; border-radius: 999px; background: #181818; color: #f5f5f5;
+                box-shadow: 0 6px 20px #0008; font: 13px/20px system-ui, -apple-system, "Segoe UI", sans-serif;
                 opacity: 1; transition: opacity 250ms ease; pointer-events: auto; }
             .card.fading { opacity: 0; pointer-events: none; }
-            .heading { display: flex; align-items: center; gap: 10px; }
-            .dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: #1ed760; }
-            .busy .dot { background: transparent; border: 2px solid #535353; border-top-color: #1ed760;
-                animation: spin 1s linear infinite; }
-            .warning .dot { background: #f5c969; }
-            .title { flex: 1; font-weight: 700; font-size: 13px; }
-            .detail { margin: 8px 28px 0 20px; color: #b3b3b3; font-size: 12px; }
-            button { border: 0; border-radius: 50%; width: 28px; height: 28px; padding: 0;
-                background: transparent; color: #b3b3b3; cursor: pointer; font-size: 18px; }
-            button:hover { background: #333; color: #fff; }
-            button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-            .compact { padding: 10px 12px; }
-            .compact .detail { display: none; }
+            .busy { border-color: #1ed760; animation: border-glow 1.8s ease-in-out infinite; }
+            .warning { border-color: #f5c96999; color: #f5c969; }
+            .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .detail { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+                overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
             .tooltip { position: fixed; max-width: min(280px, calc(100vw - 16px)); padding: 10px 12px;
                 border-radius: 6px; background: #333; color: #fff; box-shadow: 0 4px 16px #0009;
                 font: 12px/1.4 system-ui, sans-serif; pointer-events: none; }
             [hidden] { display: none !important; }
-            @keyframes spin { to { transform: rotate(360deg); } }
-            @media (prefers-reduced-motion: reduce) { .busy .dot { animation: none; } .card { transition: none; } }
+            @keyframes border-glow {
+                0%, 100% { border-color: #1ed76066; box-shadow: 0 6px 20px #0008, 0 0 0 0 #1ed76000, 0 0 8px #1ed76012; }
+                50% { border-color: #1ed760; box-shadow: 0 6px 20px #0008, 0 0 0 3px #1ed76012, 0 0 22px #1ed76038; }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .card { transition: none; }
+                .busy { animation: none; box-shadow: 0 6px 20px #0008, 0 0 12px #1ed76028; }
+            }
         `;
         root = document.createElement('section');
         root.className = 'card';
         root.setAttribute('aria-label', 'Spotify Ad Skip status');
-        const heading = document.createElement('div');
-        heading.className = 'heading';
-        const dot = document.createElement('span');
-        dot.className = 'dot';
-        dot.setAttribute('aria-hidden', 'true');
         const status = document.createElement('div');
-        status.style.flex = '1';
         status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
         status.setAttribute('aria-atomic', 'true');
@@ -309,13 +300,8 @@ function createPlaybackUI() {
         title.className = 'title';
         detail = document.createElement('div');
         detail.className = 'detail';
-        detail.style.marginLeft = '0';
         status.append(title, detail);
-        toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.addEventListener('click', () => setCompact(!root.classList.contains('compact')));
-        heading.append(dot, status, toggle);
-        root.append(heading);
+        root.append(status);
         tooltip = document.createElement('div');
         tooltip.className = 'tooltip';
         tooltip.setAttribute('role', 'tooltip');
@@ -330,13 +316,6 @@ function createPlaybackUI() {
         render();
         if (locked) observe();
     }
-    function setCompact(compact) {
-        if (!root) return;
-        root.classList.toggle('compact', compact);
-        toggle.textContent = compact ? '+' : '−';
-        toggle.setAttribute('aria-label', compact ? 'Show status details' : 'Minimize status');
-        toggle.setAttribute('aria-expanded', String(!compact));
-    }
     function render() {
         if (!root) return;
         clearTimeout(fadeTimer);
@@ -346,7 +325,7 @@ function createPlaybackUI() {
         root.className = 'card ' + model.kind;
         title.textContent = model.title;
         detail.textContent = model.detail;
-        setCompact(false);
+        root.title = model.detail;
         if (model.kind !== 'busy') {
             fadeTimer = setTimeout(() => {
                 root.classList.add('fading');
